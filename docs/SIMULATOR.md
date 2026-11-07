@@ -12,6 +12,7 @@ From the repository root:
 ./gradlew :tools:simulate --args="--preset tor-typical --seconds 60 --wav path/to/voice.wav"
 ./gradlew :tools:simulate --args="--delay 400 --jitter 120 --loss 2 --seconds 60"
 ./gradlew :tools:simulate --args="--preset tor-real --seconds 60"
+./gradlew :tools:simulate --args="--preset tor-peer --seconds 120"
 ./gradlew torLoopbackTest
 ```
 
@@ -21,7 +22,8 @@ silence. Without `--wav`, the in-memory profiles send a deterministic 440 Hz ton
 writes that tone to `source.wav` and then reads it through the WAV input adapter. Capture is paced
 at the app's 20 ms audio frame interval.
 
-Each run writes two decoded receive WAVs and two metrics CSVs under a unique run directory.
+The in-memory and `tor-real` runs write two decoded receive WAVs and two metrics CSVs under a
+unique run directory. `tor-peer` writes the desktop endpoint's decoded WAV and metrics CSV.
 LAN output is placed below `build/simulator/E1_lan_loopback` by default and can be passed to
 `tools/report_stats.py`; for example, `find build/simulator/E1_lan_loopback -name '*.csv'` lists
 its CSV inputs. Set `--out DIRECTORY` to choose another base directory. Empty circuit id and hop
@@ -47,9 +49,18 @@ The simulator is useful for repeatable pipeline and report data. It does not rep
 to desktop and mobile data Tor calls described in [the report plan](REPORT_PLAN.md).
 
 `tor-real` starts two independent local Tor clients, waits for both to bootstrap, publishes and
-mutually pairs their onion services, then completes a short audio call through Tor. A bootstrap
+mutually pairs their onion services, fetches each paired descriptor, then completes a short audio
+call through Tor. Transient descriptor `NOT_FOUND` results are retried before dialing. A bootstrap
 timeout is retried once; attempt logs remain beside the output. Temporary Tor data directories,
 including service private keys, are removed after the run. Only the call CSV/summary JSON and Tor
-logs are copied to the output directory. The CI-only `torLoopbackTest` also runs the opt-in Tor
-control/process smoke tests. The CI gate is manual or enabled with the `qualify:tor` pull-request
+logs are copied to the output directory. The CI-only `torLoopbackTest` runs the two-client Tor
+control and call qualification. The CI gate is manual or enabled with the `qualify:tor` pull-request
 label.
+
+`tor-peer` starts one desktop Tor client and publishes a pairing payload. Paste it into the
+Android app, then paste the Android app's pairing payload into the simulator's stdin. The
+simulator authorizes the Android peer, accepts its incoming call, sends the selected WAV (or a
+deterministic 440 Hz tone), and writes the desktop endpoint's decoded WAV and metrics under the
+run directory. This headless path exercises the Android app and desktop JVM runtime over Tor; it
+does not establish distinct NATs or verify that a human listener heard the audio. Stop the Android
+app's Tor service and remove the temporary desktop contact after the run.

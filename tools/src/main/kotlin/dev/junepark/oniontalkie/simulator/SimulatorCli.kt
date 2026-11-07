@@ -42,6 +42,8 @@ fun main(args: Array<String>) = runBlocking {
     try {
         if (options.preset == "tor-real") {
             runTorRealSimulation(options, outputDirectory, engineScope)
+        } else if (options.preset == "tor-peer") {
+            runTorPeerSimulation(options, outputDirectory, engineScope)
         } else {
             val network = SimulatorNetwork(engineScope, options.impairment)
             val frameLimit = options.seconds * 1_000 / 20
@@ -95,13 +97,17 @@ fun main(args: Array<String>) = runBlocking {
     }
 
     val csvFiles = outputDirectory.walkTopDown().filter { it.isFile && it.extension == "csv" }.sorted().toList()
-    check(csvFiles.size == 2) { "Expected two metrics CSVs, found ${csvFiles.size}" }
-    check(listOf("decoded-a.wav", "decoded-b.wav").all { File(outputDirectory, it).length() > 44 }) {
-        "Decoded WAV output is missing or empty"
+    val expectedCsvCount = if (options.preset == "tor-peer") 1 else 2
+    check(csvFiles.size == expectedCsvCount) {
+        "Expected $expectedCsvCount metrics CSVs, found ${csvFiles.size}"
+    }
+    val decodedFiles = if (options.preset == "tor-peer") listOf("decoded-desktop.wav")
+    else listOf("decoded-a.wav", "decoded-b.wav")
+    check(decodedFiles.all { File(outputDirectory, it).length() > 44 }) {
+        "Decoded WAV output is missing or empty: ${decodedFiles.joinToString()}"
     }
     println("Simulation complete: preset=${options.preset}, duration=${options.seconds}s")
-    println("Decoded WAV: ${File(outputDirectory, "decoded-a.wav").absolutePath}")
-    println("Decoded WAV: ${File(outputDirectory, "decoded-b.wav").absolutePath}")
+    decodedFiles.forEach { println("Decoded WAV: ${File(outputDirectory, it).absolutePath}") }
     csvFiles.forEach { println("Metrics CSV: ${it.absolutePath}") }
 }
 
@@ -186,13 +192,14 @@ internal data class SimulatorOptions(
                 "tor-typical" -> ImpairmentConfig(delayMs = 400, jitterMs = 150, lossPct = 1.0, burstMs = 100, kbps = 96.0, seed = 17)
                 "tor-bad" -> ImpairmentConfig(delayMs = 900, jitterMs = 400, lossPct = 5.0, burstMs = 200, kbps = 64.0, seed = 23)
                 "tor-real" -> ImpairmentConfig(delayMs = 0, jitterMs = 0, seed = 31)
-                else -> error("Unknown preset '$preset'. Choose lan, tor-typical, tor-bad, or tor-real.")
+                "tor-peer" -> ImpairmentConfig(delayMs = 0, jitterMs = 0, seed = 37)
+                else -> error("Unknown preset '$preset'. Choose lan, tor-typical, tor-bad, tor-real, or tor-peer.")
             }
             require(seconds in 1..3_600) { "--seconds must be between 1 and 3600" }
             require(wav == null || wav.isFile) { "WAV input does not exist: ${wav?.path}" }
-            if (preset == "tor-real") {
+            if (preset == "tor-real" || preset == "tor-peer") {
                 require(delayMs == null && jitterMs == null && lossPct == null && burstMs == null && kbps == null) {
-                    "Network impairment options do not apply to the tor-real preset"
+                    "Network impairment options do not apply to real-Tor presets"
                 }
             }
             val impairment = presetConfig.copy(
@@ -209,7 +216,7 @@ internal data class SimulatorOptions(
             Onion Dial call simulator
             Usage: ./gradlew :tools:simulate --args="[options]"
             Options:
-              --preset lan|tor-typical|tor-bad|tor-real   Network profile (default: lan)
+              --preset lan|tor-typical|tor-bad|tor-real|tor-peer   Network profile (default: lan)
               --delay MS                        One-way fixed delay
               --jitter MS                       Uniform +/- one-way jitter
               --loss PERCENT                    Target long-run AUDIO frame loss
@@ -221,6 +228,8 @@ internal data class SimulatorOptions(
 
             Without --wav, the simulator sends a deterministic 440 Hz tone. Each endpoint writes
             its decoded receive audio to a WAV and its per-call metrics CSV under the output folder.
+            tor-peer starts one desktop Tor endpoint, prints its pairing payload, then reads the
+            Android pairing payload from stdin and accepts the incoming Android call.
         """.trimIndent()
     }
 }

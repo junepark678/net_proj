@@ -21,6 +21,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
@@ -29,9 +30,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Runs the same two-engine call through two independent local Tor daemons and onion services. */
 internal suspend fun runTorRealSimulation(
@@ -64,11 +67,19 @@ internal suspend fun runTorRealSimulation(
         val torB = clients.second
         clientA = torA
         clientB = torB
+        val descriptorsA = Channel<TorEvent.HiddenServiceDescriptor>(Channel.UNLIMITED)
+        val descriptorsB = Channel<TorEvent.HiddenServiceDescriptor>(Channel.UNLIMITED)
         eventWatchers += scope.launch {
-            torA.control.events.collect { event -> logTorEvent("A", event) }
+            torA.control.events.collect { event ->
+                logTorEvent("A", event)
+                if (event is TorEvent.HiddenServiceDescriptor) descriptorsA.send(event)
+            }
         }
         eventWatchers += scope.launch {
-            torB.control.events.collect { event -> logTorEvent("B", event) }
+            torB.control.events.collect { event ->
+                logTorEvent("B", event)
+                if (event is TorEvent.HiddenServiceDescriptor) descriptorsB.send(event)
+            }
         }
 
         val callRuntimeA = JvmOnionCallRuntime.open(
@@ -100,8 +111,13 @@ internal suspend fun runTorRealSimulation(
             ?: error("Tor A pairing payload is invalid")
         val peerB = (PairingPayload.parse(pairingB) as? PairingResult.Valid)?.payload
             ?: error("Tor B pairing payload is invalid")
+
         check(callRuntimeA.importPairing(pairingB) is PairingResult.Valid) { "Could not pair Tor A with Tor B" }
         check(callRuntimeB.importPairing(pairingA) is PairingResult.Valid) { "Could not pair Tor B with Tor A" }
+        // ADD_ONION returns before the descriptor has reached the HSDirs. Explicitly fetch
+        // each paired descriptor before starting the call, retrying transient NOT_FOUNDs.
+        awaitPeerDescriptor(torA.control, descriptorsA, peerB.onion, "A")
+        awaitPeerDescriptor(torB.control, descriptorsB, peerA.onion, "B")
 
         coroutineScope {
             val acceptIncoming = async {
@@ -143,7 +159,16 @@ internal suspend fun runTorRealSimulation(
                         }
                         delay(5_000)
                     }
-                    is CallState.Online -> error("Tor call failed before media started: ${state.lastEnd}")
+                    is CallState.Online -> {
+                        check(state.lastEnd != CallEndReason.NORMAL) {
+                            "Tor call ended normally before media started"
+                        }
+                        check(System.nanoTime() < connectDeadline) {
+                            "Tor onion service remained unavailable after repeated attempts"
+                        }
+                        println("Tor dial attempt failed (${state.lastEnd}); waiting before retry")
+                        delay(5_000)
+                    }
                     else -> error("Unexpected Tor call state: $state")
                 }
             }
@@ -175,14 +200,128 @@ internal suspend fun runTorRealSimulation(
     }
 }
 
+/** Runs a desktop peer against the real Onion Dial app on an Android device or emulator. */
+internal suspend fun runTorPeerSimulation(
+    options: SimulatorOptions,
+    outputDirectory: File,
+    scope: CoroutineScope,
+) {
+    val privateRoot = Files.createTempDirectory("onion-dial-tor-peer-")
+    var client: TorClient? = null
+    var runtime: JvmOnionCallRuntime? = null
+    var eventWatcher: Job? = null
+    try {
+        val frameLimit = options.seconds * 1_000 / 20
+        val sourceWav = options.wavInput ?: createToneWav(File(outputDirectory, "source.wav"), frameLimit)
+        val bootstrapStartedNanos = System.nanoTime()
+        val tor = startTorClient(
+            scope,
+            privateRoot.resolve("tor-desktop"),
+            File(outputDirectory, "tor-desktop.log"),
+        )
+        println("DESKTOP_TOR_BOOTSTRAP_MS=${(System.nanoTime() - bootstrapStartedNanos) / 1_000_000L}")
+        client = tor
+        eventWatcher = scope.launch {
+            tor.control.events.collect { event -> logTorEvent("desktop", event) }
+        }
+
+        val desktopRuntime = JvmOnionCallRuntime.open(
+            control = tor.control,
+            socksPort = tor.process.socksPort,
+            dataDirectory = tor.process.dataDir,
+            displayName = "Onion-Dial-Desktop",
+            scope = scope,
+            inputFactory = { WavAudioInput(sourceWav, frameLimit) },
+            outputFactory = { WavAudioOutput(File(outputDirectory, "decoded-desktop.wav")) },
+        )
+        runtime = desktopRuntime
+        desktopRuntime.goOnline()
+        val localPairing = checkNotNull(desktopRuntime.pairingText.value) {
+            "Desktop pairing payload was not published"
+        }
+        println("DESKTOP_PAIRING_TEXT=$localPairing")
+        println("Paste the Android pairing payload, then press Enter:")
+        val androidPairing = withContext(Dispatchers.IO) { System.`in`.bufferedReader().readLine() }
+            ?: error("No Android pairing payload was provided")
+        check(PairingPayload.parse(androidPairing) is PairingResult.Valid) {
+            "Android pairing payload is invalid"
+        }
+        check(desktopRuntime.importPairing(androidPairing) is PairingResult.Valid) {
+            "Could not authorize the Android peer"
+        }
+        println("ANDROID_PEER_AUTHORIZED")
+        println("Waiting for an incoming Android call (up to 10 minutes)")
+
+        withTimeout(10 * 60_000L) { desktopRuntime.callState.first { it is CallState.Ringing } }
+        println("ANDROID_CALL_RINGING")
+        val acceptanceStartedNanos = System.nanoTime()
+        check(desktopRuntime.accept()) { "Could not accept the Android call" }
+        withTimeout(45_000L) { desktopRuntime.callState.first { it is CallState.InCall } }
+        println("ANDROID_DESKTOP_CALL_CONNECTED")
+        println("DESKTOP_ACCEPT_TO_INCALL_MS=${(System.nanoTime() - acceptanceStartedNanos) / 1_000_000L}")
+
+        val ended = withTimeout(options.seconds * 1_000 + 60_000) {
+            desktopRuntime.callState.first { it is CallState.Online || it is CallState.PeerOffline }
+        }
+        check(ended == CallState.Online(CallEndReason.NORMAL)) {
+            "Desktop call ended unexpectedly: $ended"
+        }
+    } finally {
+        eventWatcher?.cancelAndJoin()
+        try { runtime?.shutdown() } catch (_: Exception) { }
+        try { client?.close() } catch (_: Exception) { }
+        try {
+            copyMetrics(
+                privateRoot.resolve("tor-desktop/calls"),
+                outputDirectory.toPath().resolve("desktop/calls"),
+            )
+        } finally {
+            deletePrivateTree(privateRoot)
+        }
+    }
+}
+
 private fun logTorEvent(client: String, event: TorEvent) {
     if (event is TorEvent.HiddenServiceDescriptor &&
-        event.action in setOf("CREATED", "FAILED", "RECEIVED")
+        event.action in setOf("CREATED", "REQUESTED", "FAILED", "RECEIVED")
     ) {
         println(
             "Tor $client HS_DESC action=${event.action} auth=${event.authType} " +
                 "reason=${event.fields["REASON"] ?: "none"}",
         )
+    }
+}
+
+private suspend fun awaitPeerDescriptor(
+    control: TorControl,
+    events: Channel<TorEvent.HiddenServiceDescriptor>,
+    onion: String,
+    client: String,
+) {
+    val expectedAddress = onion.removeSuffix(".onion")
+    val deadline = System.nanoTime() + DESCRIPTOR_FETCH_WINDOW_NANOS
+    var attempt = 0
+    while (true) {
+        attempt++
+        control.command("HSFETCH $expectedAddress")
+        val result = withTimeoutOrNull<TorEvent.HiddenServiceDescriptor>(DESCRIPTOR_FETCH_ATTEMPT_TIMEOUT_MS) {
+            events.receiveAsFlow().first {
+                it.address == expectedAddress && it.action in setOf("RECEIVED", "FAILED")
+            }
+        }
+        if (result?.action == "RECEIVED") {
+            println("Tor $client fetched the paired hidden-service descriptor on attempt $attempt")
+            return
+        }
+        val reason = result?.fields?.get("REASON") ?: "no descriptor event"
+        check(reason in setOf("NOT_FOUND", "QUERY_NO_HSDIR", "QUERY_RATE_LIMITED", "no descriptor event")) {
+            "Tor $client could not fetch the paired hidden-service descriptor (reason=$reason)"
+        }
+        check(System.nanoTime() < deadline) {
+            "Tor $client could not fetch the paired hidden-service descriptor after repeated attempts"
+        }
+        println("Tor $client descriptor fetch attempt $attempt unavailable ($reason); waiting before retry")
+        delay(DESCRIPTOR_FETCH_RETRY_DELAY_MS)
     }
 }
 
@@ -312,3 +451,6 @@ private const val BOOTSTRAP_ATTEMPTS = 2
 private const val MAX_RETAINED_TOR_LINES = 500
 private const val BOOTSTRAP_TIMEOUT_MS = 180_000L
 private const val CONNECT_RETRY_WINDOW_NANOS = 240_000_000_000L
+private const val DESCRIPTOR_FETCH_WINDOW_NANOS = 240_000_000_000L
+private const val DESCRIPTOR_FETCH_ATTEMPT_TIMEOUT_MS = 30_000L
+private const val DESCRIPTOR_FETCH_RETRY_DELAY_MS = 5_000L

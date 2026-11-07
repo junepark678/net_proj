@@ -23,10 +23,11 @@ application {
 
 tasks.register<JavaExec>("simulate") {
     group = "application"
-    description = "Runs two Onion Dial call engines through an impaired in-memory transport."
+    description = "Runs call simulations or a headless desktop peer for an Android Tor call."
     classpath = sourceSets.main.get().runtimeClasspath
     mainClass.set(application.mainClass)
     workingDir(rootProject.projectDir)
+    standardInput = System.`in`
 }
 
 tasks.register<JavaExec>("torLoopbackTest") {
