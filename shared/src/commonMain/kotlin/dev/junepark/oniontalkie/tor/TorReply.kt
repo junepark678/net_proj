@@ -29,7 +29,7 @@ internal class ReplyReader(private val transport: ControlTransport) {
             }
             if (lineCode != code) throw TorProtocolException("Reply status changed from $code to $lineCode")
             val data = if (separator == '+') {
-                buildList {
+                buildList<String> {
                     while (true) {
                         val dataLine = requiredLine()
                         if (dataLine == ".") break

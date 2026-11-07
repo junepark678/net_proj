@@ -46,7 +46,19 @@ class TorControl(private val transport: ControlTransport, scope: CoroutineScope)
                 val reader = ReplyReader(transport)
                 while (true) {
                     val reply = reader.read(::onEvent)
-                    if (reply.code == 650) onEvent(reply) else replies.send(reply)
+                    if (reply.code == 650) {
+                        onEvent(reply)
+                    } else {
+                        // Apply snapshots on the reader, in wire order. A command coroutine
+                        // may resume after newer events have already arrived.
+                        if (reply.code in 200..299) {
+                            reply.lines.firstOrNull { it.text.startsWith("status/bootstrap-phase=") }?.let { line ->
+                                val value = line.data?.joinToString("\n") ?: line.text.substringAfter('=')
+                                parseBootstrapPhase(value)?.let { mutableBootstrap.value = it.progress }
+                            }
+                        }
+                        replies.send(reply)
+                    }
                 }
             } catch (failure: Throwable) {
                 terminate(if (failure is CancellationException) {
@@ -88,7 +100,6 @@ class TorControl(private val transport: ControlTransport, scope: CoroutineScope)
         val entry = reply.lines.firstOrNull { it.text.startsWith("$key=") }
             ?: throw TorProtocolException("GETINFO reply omitted the requested key")
         val value = if (entry.data != null) entry.data.joinToString("\n") else entry.text.substringAfter('=')
-        if (key == "status/bootstrap-phase") parseBootstrapPhase(value)?.let { mutableBootstrap.value = it.progress }
         return value
     }
 
@@ -128,7 +139,9 @@ class TorControl(private val transport: ControlTransport, scope: CoroutineScope)
     }
 
     private fun terminate(cause: Throwable) {
-        replies.close(cause)
+        replies.close(if (cause is CancellationException) {
+            TorConnectionClosedException("Tor control command was cancelled", cause)
+        } else cause)
         runCatching { transport.close() }
         lifetime.cancel()
     }

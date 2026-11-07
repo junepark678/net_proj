@@ -15,6 +15,8 @@ kotlin {
     }
     jvm("desktop")
 
+    applyDefaultHierarchyTemplate()
+
     sourceSets {
         commonMain.dependencies {
             api(libs.kotlinx.coroutines.core)

@@ -4,6 +4,8 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.channels.SocketChannel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.runInterruptible
 
 /** Plain TCP transport shared by Android and desktop. Connect only to a trusted local Tor.
@@ -12,11 +14,11 @@ class JvmControlTransport private constructor(private val socket: Socket) : Cont
     private val reader = socket.getInputStream().bufferedReader(Charsets.UTF_8)
     private val writer = socket.getOutputStream().bufferedWriter(Charsets.UTF_8)
 
-    override suspend fun readLine(): String? = runInterruptible(Dispatchers.IO) { reader.readLine() }
+    override suspend fun readLine(): String? = io { reader.readLine() }
 
     override suspend fun writeLine(line: String) {
         require('\r' !in line && '\n' !in line) { "A control command must be a single line" }
-        runInterruptible(Dispatchers.IO) {
+        io {
             writer.write(line)
             writer.write("\r\n")
             writer.flush()
@@ -24,6 +26,16 @@ class JvmControlTransport private constructor(private val socket: Socket) : Cont
     }
 
     override fun close() { socket.close() }
+
+    private suspend fun <T> io(block: () -> T): T = try {
+        runInterruptible(Dispatchers.IO, block)
+    } catch (failure: Throwable) {
+        // SocketChannel reports interruption as ClosedByInterruptException rather than
+        // InterruptedException. Restore coroutine cancellation semantics in that case.
+        runCatching { close() }
+        currentCoroutineContext().ensureActive()
+        throw failure
+    }
 
     companion object {
         /** Opens TCP with a bounded connect timeout. Command timeouts belong to the caller.
@@ -40,6 +52,7 @@ class JvmControlTransport private constructor(private val socket: Socket) : Cont
                 }
             } catch (failure: Throwable) {
                 runCatching { socket.close() }
+                currentCoroutineContext().ensureActive()
                 throw failure
             }
         }
