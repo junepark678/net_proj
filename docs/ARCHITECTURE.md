@@ -141,6 +141,56 @@ reads are allowed, writes consume a whole buffer, and flush/close are explicit.
 flushes per frame. Callers serialize reads and writes independently; the transport
 adapter is responsible for disabling TCP Nagle.
 
+## Call lifecycle
+
+`call.CallEngine` owns the single call and exposes `StateFlow<CallState>` for UI
+collection. `goOnline()` waits for publication; `call(peerOnion)` admits an
+outbound attempt and returns immediately. `accept()` / `decline()` decide an
+incoming `Ringing` call. `hangUp()` waits for call teardown. `goOffline()` releases
+the call and listener, and permits going online again; `close()` is terminal.
+Cancelling the owning coroutine scope also releases everything. Stale commands
+return `false`. A `PeerOffline` snapshot is distinct from other call failures and
+permits retry or accepting a new incoming call. `Online.lastEnd` retains the
+last call's outcome until the next attempt or presence restart.
+
+The engine adapts future #7/#8 integrations through `CallPresence.open()` →
+`CallListener.accept()` and `CallDialer.dial()`, all suspendable. Opening presence
+owns publication/listening as one resource; listener close withdraws it. Each
+accepted/dialed `protocol.FrameChannel` transfers ownership to the engine. The
+adapter must release resources if cancellation prevents delivery. Incoming
+connections carry a verified paired onion identity from the adapter: v1 HELLO
+only carries a display name, so resolving this association is still an explicit
+integration requirement, not an authentication claim about the wire protocol.
+Both local and peer onions use the existing v3 checksum validator and normalize
+ASCII case and the optional `.onion` suffix before glare comparison.
+
+Admission reserves one session before reading its HELLO. Other arrivals get a
+flushed `BYE(BUSY)`, except simultaneous dialing to the same peer: the smaller
+onion rejects the inbound leg with `BYE(GLARE)`; the larger reserves the inbound
+slot and tears down its outbound leg before negotiating the incoming call.
+Glare applies only while dialing, never to an established call. A silent inbound
+HELLO and the outbound HELLO/ACCEPT exchange each have a 10-second deadline;
+ringing lasts 30 seconds after a valid HELLO. Ringing may first appear without a
+display name while HELLO is being read. Early acceptance is retained until that
+HELLO validates; decline tears down immediately.
+
+InCall sends PING every 2 seconds; only received PONG or AUDIO resets the
+15-second monotonic inactivity deadline. Timeout is a local `TIMEOUT` outcome;
+v1 has no TIMEOUT BYE code, so graceful timeout/decline uses `BYE(NORMAL)`.
+BYE delivery (also for rejected calls) is bounded to one second so a stalled
+writer cannot indefinitely delay teardown. EOF, protocol errors, media failures,
+hangup, and owner cancellation all share cleanup. A once-only transport wrapper
+also covers FrameReader's own close-on-error path. State returns idle only after
+the transport, reader, sender, and media owner have stopped. StateFlow can
+conflate rapid intermediate snapshots as usual.
+
+`CallSessionFactory` creates the #15 media owner at acceptance, with `run`,
+`receive(Frame.Audio)`, and `close` as its only lifecycle methods. `run` sends
+encoded AUDIO through an engine callback; `receive` promptly enqueues encoded
+audio for playout. The engine owns all frame reads and serializes frame writes.
+No Tor/SOCKS implementation, codec pipeline, jitter buffer, device API, or call
+history is added here.
+
 ## Audio path
 
 ```
@@ -183,7 +233,8 @@ t_s,rtt_ms,jitter_ms,loss_pct,late,plc,buffer_ms,tx_kbps,rx_kbps,circuit_id,hops
 for the live screen. The call owner creates one logger with a `FileMetricsSink`
 and a coroutine scope on an I/O dispatcher, then feeds it transport and playout
 events. The transport, jitter buffer and Tor control integrations are owned by
-their respective issues; no call engine exists in the scaffold yet.
+their respective issues. The pluggable call-session owner is responsible for
+connecting the media pipeline and its metrics lifecycle.
 
 ```kotlin
 val files = FileMetricsSink(appData, startedAtIso, peerShort)
