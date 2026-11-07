@@ -51,6 +51,23 @@ All multi-byte integers big-endian. The AUDIO `seq`/`tsMs` feed the jitter
 buffer and the metrics logger (loss by gaps in `seq`, jitter per RFC 3550
 §6.4.1, RTT from PING/PONG, one-way delay estimated as RTT/2).
 
+Protocol version is `1`. HELLO names use strict UTF-8, with `len` counting bytes
+(maximum 256 bytes); AUDIO payloads are at most 1275 bytes. BYE reason codes are
+`0 = NORMAL`, `1 = VERSION`, `2 = BUSY`, `3 = GLARE`, and `4 = PROTOCOL_ERROR`;
+other reasons and unknown frame types are invalid. HELLO and ACCEPT versions are
+checked as soon as the version byte is read, before the remaining body is decoded.
+An unsupported HELLO version receives BYE(VERSION), immediately flushed, then the
+stream closes. Malformed or truncated frames also close the stream with a typed
+`ProtocolException`. Read failures are rethrown on every subsequent read; only
+EOF between frames is a clean end of stream.
+
+The pure Kotlin codec is in `shared`'s `protocol` package. `FrameChannel` is the
+minimal suspendable duplex interface for the Tor transport adapter: partial
+reads are allowed, writes consume a whole buffer, and flush/close are explicit.
+`FrameReader` reads only the current frame; `FrameWriter` writes one buffer and
+flushes per frame. Callers serialize reads and writes independently; the transport
+adapter is responsible for disabling TCP Nagle.
+
 ## Audio path
 
 ```
