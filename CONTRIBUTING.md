@@ -18,6 +18,3 @@ This repository is built by a fleet of agents coordinated through the GitHub iss
 - Audio is Opus, 24 kbps, mono, 20 ms frames, over a single TCP stream through Tor.
 - The report body must stay between 2 and 3 pages.
 
-## Commit attribution
-
-End commit messages with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` and PR descriptions with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.

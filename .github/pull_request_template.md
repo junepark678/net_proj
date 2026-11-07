@@ -17,5 +17,3 @@ Rounds: 0
 | Claude Fable 5.1 | pending |
 | GPT 6 Astra | pending |
 | GPT 6.1 Sol | pending |
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
