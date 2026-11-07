@@ -26,9 +26,18 @@ private class DirectoryClientAuthDir(private val directory: Path) : ClientAuthDi
     override suspend fun write(fileName: String, contents: String): Unit = withContext(Dispatchers.IO) {
         val destination = file(fileName)
         ensureDirectory()
-        // createTempFile is owner-only on POSIX; the move preserves that. Tor ignores files that
-        // do not end in .auth_private, so the temporary name is never picked up half-written.
-        val temporary = Files.createTempFile(directory, ".onion-talkie-", ".tmp")
+        // Tor ignores files that do not end in .auth_private, so the temporary name is never
+        // picked up half-written. Set the exact mode instead of inheriting the process umask.
+        val temporary = try {
+            Files.createTempFile(
+                directory,
+                ".onion-talkie-",
+                ".tmp",
+                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")),
+            )
+        } catch (_: UnsupportedOperationException) {
+            Files.createTempFile(directory, ".onion-talkie-", ".tmp")
+        }
         try {
             Files.write(temporary, contents.toByteArray(Charsets.UTF_8))
             try {
@@ -43,16 +52,16 @@ private class DirectoryClientAuthDir(private val directory: Path) : ClientAuthDi
 
     override suspend fun delete(fileName: String): Unit = withContext(Dispatchers.IO) {
         Files.deleteIfExists(file(fileName))
-        Unit
     }
 
     private fun ensureDirectory() {
-        if (Files.isDirectory(directory)) return
         // Tor refuses a ClientOnionAuthDir that other users can read, so create it 0700.
         try {
             Files.createDirectories(directory, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")))
+            Files.setPosixFilePermissions(directory, PosixFilePermissions.fromString("rwx------"))
         } catch (_: UnsupportedOperationException) {
             Files.createDirectories(directory)
+            return
         }
     }
 }

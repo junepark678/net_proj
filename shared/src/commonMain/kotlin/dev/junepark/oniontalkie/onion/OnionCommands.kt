@@ -51,7 +51,8 @@ internal fun formatAddOnion(
     require(localHost.isNotEmpty() && localHost.all { it.isLetterOrDigit() || it in ".:-[]" }) { "Invalid host" }
     return buildString {
         append("ADD_ONION ").append(existingKey ?: "NEW:ED25519-V3")
-        if (existingKey != null) append(" Flags=DiscardPK")
+        append(" Flags=V3Auth")
+        if (existingKey != null) append(",DiscardPK")
         append(" Port=").append(virtualPort).append(',').append(localHost).append(':').append(localPort)
         authorizedKeys.map { it.canonical }.distinct().sorted().forEach { append(" ClientAuthV3=").append(it) }
     }

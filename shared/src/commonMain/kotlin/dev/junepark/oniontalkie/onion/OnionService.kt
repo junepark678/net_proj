@@ -5,18 +5,22 @@ import dev.junepark.oniontalkie.identity.IdentityStore
 import dev.junepark.oniontalkie.tor.TorCommandException
 import dev.junepark.oniontalkie.tor.TorControl
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 /**
  * Publishes our v3 onion service through an authenticated [TorControl], limited to paired peers.
  *
  * The service key is created by Tor on first run (`ADD_ONION NEW:ED25519-V3`), saved in
- * [keyStore] before [publish] returns, and reused afterwards so the address is stable. Our
+ * [keyStore] before [publish] returns, and reused afterwards so the address is stable. Android
+ * wraps it with an AES-GCM key held by Android Keystore; desktop uses an owner-only file. Our
  * x25519 client-auth keypair is generated once and kept in the [IdentityStore] together with the
  * resulting address. The service is tied to the control connection (no `Detach`), so it
  * disappears if the connection closes; [unpublish] removes it explicitly.
@@ -51,26 +55,40 @@ class OnionService(
         val savedKey = keyStore.load()
         val authorized = peers.ifEmpty { listOf(PeerAuthKey(ClientAuthKeyPair.generate().publicKey)) }
         val command = formatAddOnion(savedKey, authorized, localPort, virtualPort)
-        val result = parseAddOnionReply(control.command(command))
+        var added: AddOnionResult? = null
         try {
-            // Persist before anything else can fail, otherwise the first-run key would be lost.
-            if (savedKey == null) {
-                val created = checkNotNull(result.privateKey) { "Tor did not return the new service key" }
-                keyStore.save(created)
+            // TorControl finishes an admitted command even if its caller is cancelled. Keep
+            // reply handling, durable key/identity writes, and state publication together so
+            // cancellation can never strand an untracked ADD_ONION service.
+            withContext(NonCancellable) {
+                val result = parseAddOnionReply(control.command(command))
+                added = result
+                state.value = result.onion
+                try {
+                    if (savedKey == null) {
+                        val created = checkNotNull(result.privateKey) { "Tor did not return the new service key" }
+                        keyStore.save(created)
+                    }
+                    val identity = identityStore.loadOrCreate {
+                        val pair = ClientAuthKeyPair.generate()
+                        Identity(result.onion, pair.publicKey, pair.privateKey, displayName)
+                    }
+                    check(identity.onion == result.onion) {
+                        "The saved identity belongs to a different onion service than the saved key"
+                    }
+                } catch (failure: Throwable) {
+                    runCatching { removeService(result.onion) }
+                    throw failure
+                }
             }
-            val identity = identityStore.loadOrCreate {
-                val pair = ClientAuthKeyPair.generate()
-                Identity(result.onion, pair.publicKey, pair.privateKey, displayName)
+            coroutineContext.ensureActive()
+        } catch (cancelled: CancellationException) {
+            added?.let { result ->
+                withContext(NonCancellable) { runCatching { removeService(result.onion) } }
             }
-            check(identity.onion == result.onion) {
-                "The saved identity belongs to a different onion service than the saved key"
-            }
-        } catch (failure: Throwable) {
-            withContext(NonCancellable) { runCatching { removeService(result.onion) } }
-            throw failure
+            throw cancelled
         }
-        state.value = result.onion
-        result.onion
+        checkNotNull(added).onion
     }
 
     /** Issues `DEL_ONION`. Does nothing when not published. */

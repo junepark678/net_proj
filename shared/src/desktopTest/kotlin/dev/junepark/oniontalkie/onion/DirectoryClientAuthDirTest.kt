@@ -28,6 +28,15 @@ class DirectoryClientAuthDirTest {
         assertFalse(Files.exists(file))
     }
 
+    @Test fun tightensPermissionsOnAnExistingAuthorizationDirectory(): Unit = runBlocking {
+        val root = Files.createTempDirectory("onion-talkie-auth-mode-").resolve("auth")
+        if (!Files.getFileStore(root.parent).supportsFileAttributeView("posix")) return@runBlocking
+        Files.createDirectories(root, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwxr-xr-x")))
+        assertEquals("rwxr-xr-x", PosixFilePermissions.toString(Files.getPosixFilePermissions(root)))
+        directoryClientAuthDir(root.toString()).write(name, "private\n")
+        assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(root)))
+    }
+
     @Test fun rejectsNamesThatCouldEscapeTheDirectory(): Unit = runBlocking {
         val dir = directoryClientAuthDir(Files.createTempDirectory("onion-talkie-auth-").toString())
         assertFailsWith<IllegalArgumentException> { dir.write("../x.auth_private", "x") }
@@ -39,6 +48,7 @@ class DirectoryClientAuthDirTest {
         OnionKeyStore(dev.junepark.oniontalkie.identity.directoryStorage(root.toString())).save(SERVICE_KEY)
         val file = root.resolve("onion-service-key.json")
         assertEquals(SERVICE_KEY, OnionKeyStore(dev.junepark.oniontalkie.identity.directoryStorage(root.toString())).load())
+        assertEquals("""{"privateKey":"plaintext-v1:$SERVICE_KEY"}""", Files.readString(file))
         if (file.fileSystem.supportedFileAttributeViews().contains("posix")) {
             assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)))
         }

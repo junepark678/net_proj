@@ -13,25 +13,36 @@ private class StoredServiceKey(val privateKey: String)
 /**
  * Persists the ED25519-V3 onion-service secret as `onion-service-key.json` in app storage.
  * On desktop and Android this is the app data directory; `directoryStorage` creates the file
- * with owner-only (0600) permissions and replaces it atomically. Wrapping the blob with the
- * Android Keystore is a follow-up. Corrupt content is reported, never replaced, since the key
+ * with owner-only (0600) permissions and replaces it atomically. Android additionally wraps the
+ * blob using a non-exportable Android Keystore key. Corrupt content is reported, never replaced, since the key
  * is the service's identity.
  */
-class OnionKeyStore(private val storage: Storage) {
+class OnionKeyStore(
+    private val storage: Storage,
+    private val keyProtector: OnionServiceKeyProtector = createOnionServiceKeyProtector(),
+) {
     private val mutex = Mutex()
     private val json = Json { ignoreUnknownKeys = true }
 
     /** The saved `ED25519-V3:<base64>` blob, or null on first run. */
     suspend fun load(): String? = mutex.withLock {
         val text = storage.read(FILE) ?: return@withLock null
-        json.decodeFromString<StoredServiceKey>(text).privateKey.also {
-            require(validServiceKeyBlob(it)) { "Stored onion service key is invalid" }
+        val stored = json.decodeFromString<StoredServiceKey>(text).privateKey
+        val key = if (validServiceKeyBlob(stored)) {
+            // Migrate keys written by earlier versions. The replacement is protected before
+            // this method returns and uses Storage's atomic owner-only write semantics.
+            keyProtector.protect(stored).also { storage.write(FILE, json.encodeToString(StoredServiceKey(it))) }
+            stored
+        } else {
+            keyProtector.unprotect(stored)
         }
+        require(validServiceKeyBlob(key)) { "Stored onion service key is invalid" }
+        key
     }
 
     suspend fun save(blob: String): Unit = mutex.withLock {
         require(validServiceKeyBlob(blob)) { "Invalid onion service key" }
-        storage.write(FILE, json.encodeToString(StoredServiceKey(blob)))
+        storage.write(FILE, json.encodeToString(StoredServiceKey(keyProtector.protect(blob))))
     }
 
     private companion object {

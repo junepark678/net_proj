@@ -14,16 +14,23 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+
+private object TestOnionServiceKeyProtector : OnionServiceKeyProtector {
+    override fun protect(privateKey: String): String = "test-protected:${privateKey.reversed()}"
+    override fun unprotect(stored: String): String = stored.removePrefix("test-protected:").reversed()
+}
 
 class OnionServiceTest {
     private class Fixture(scope: TestScope) {
         val transport = TranscriptTransport()
         val storage = MemoryStorage()
         val service = OnionService(
-            TorControl(transport, scope.backgroundScope), IdentityStore(storage), OnionKeyStore(storage), "June", 4242,
+            TorControl(transport, scope.backgroundScope), IdentityStore(storage),
+            OnionKeyStore(storage, TestOnionServiceKeyProtector), "June", 4242,
         )
     }
 
@@ -31,12 +38,13 @@ class OnionServiceTest {
         val f = Fixture(this)
         val result = async { f.service.publish(listOf(PeerAuthKey(KEY))) }
         f.transport.expect(
-            "ADD_ONION NEW:ED25519-V3 Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY",
+            "ADD_ONION NEW:ED25519-V3 Flags=V3Auth Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY",
             "250-ServiceID=${SERVICE_ID}", "250-PrivateKey=$SERVICE_KEY", "250 OK",
         )
         assertEquals(ONION, result.await())
         assertEquals(ONION, f.service.address.value)
-        assertTrue(SERVICE_KEY in f.storage.files.getValue("onion-service-key.json"))
+        assertFalse(SERVICE_KEY in f.storage.files.getValue("onion-service-key.json"))
+        assertTrue(f.storage.files.getValue("onion-service-key.json").contains("test-protected:"))
         assertTrue(ONION in f.storage.files.getValue("identity.json"))
         val pair = IdentityStore(f.storage).loadOrCreate { error("exists") }
         assertEquals(52, pair.clientAuthPub.length)
@@ -52,14 +60,14 @@ class OnionServiceTest {
         f.storage.files["onion-service-key.json"] = """{"privateKey":"$SERVICE_KEY"}"""
         val first = async { f.service.publish(listOf(PeerAuthKey(KEY))) }
         f.transport.expect(
-            "ADD_ONION $SERVICE_KEY Flags=DiscardPK Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY",
+            "ADD_ONION $SERVICE_KEY Flags=V3Auth,DiscardPK Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY",
             "250-ServiceID=$SERVICE_ID", "250 OK",
         )
         first.await()
         val second = async { f.service.publish(listOf(PeerAuthKey(KEY), PeerAuthKey(OTHER_KEY))) }
         f.transport.expect("DEL_ONION $SERVICE_ID", "250 OK")
         f.transport.expect(
-            "ADD_ONION $SERVICE_KEY Flags=DiscardPK Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY ClientAuthV3=$OTHER_KEY",
+            "ADD_ONION $SERVICE_KEY Flags=V3Auth,DiscardPK Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY ClientAuthV3=$OTHER_KEY",
             "250-ServiceID=$SERVICE_ID", "250 OK",
         )
         assertEquals(ONION, second.await())
@@ -69,7 +77,7 @@ class OnionServiceTest {
         val f = Fixture(this)
         val result = async { f.service.publish(emptyList()) }
         val command = f.transport.output.receive()
-        assertTrue(Regex("ADD_ONION NEW:ED25519-V3 Port=9999,127.0.0.1:4242 ClientAuthV3=[A-Z2-7]{52}").matches(command), command)
+        assertTrue(Regex("ADD_ONION NEW:ED25519-V3 Flags=V3Auth Port=9999,127.0.0.1:4242 ClientAuthV3=[A-Z2-7]{52}").matches(command), command)
         f.transport.feed("250-ServiceID=$SERVICE_ID", "250-PrivateKey=$SERVICE_KEY", "250 OK")
         result.await()
     }
@@ -78,7 +86,7 @@ class OnionServiceTest {
         val f = Fixture(this)
         val result = async { runCatching { f.service.publish(listOf(PeerAuthKey(KEY))) } }
         f.transport.expect(
-            "ADD_ONION NEW:ED25519-V3 Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY", "512 Bad port",
+            "ADD_ONION NEW:ED25519-V3 Flags=V3Auth Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY", "512 Bad port",
         )
         assertTrue(result.await().exceptionOrNull() is TorCommandException)
         assertTrue(f.storage.files.isEmpty())
@@ -90,12 +98,31 @@ class OnionServiceTest {
         f.storage.failWrites = true
         val result = async { runCatching { f.service.publish(listOf(PeerAuthKey(KEY))) } }
         f.transport.expect(
-            "ADD_ONION NEW:ED25519-V3 Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY",
+            "ADD_ONION NEW:ED25519-V3 Flags=V3Auth Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY",
             "250-ServiceID=$SERVICE_ID", "250-PrivateKey=$SERVICE_KEY", "250 OK",
         )
         f.transport.expect("DEL_ONION $SERVICE_ID", "250 OK")
         assertTrue(result.await().exceptionOrNull() is IllegalStateException)
         assertNull(f.service.address.value)
+    }
+
+    @Test fun cancellationAfterAddOnionReplyPersistsIdentityThenRemovesService() = runTest {
+        val f = Fixture(this)
+        val publish = async { f.service.publish(listOf(PeerAuthKey(KEY))) }
+        assertEquals(
+            "ADD_ONION NEW:ED25519-V3 Flags=V3Auth Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY",
+            f.transport.output.receive(),
+        )
+
+        publish.cancel()
+        f.transport.feed("250-ServiceID=$SERVICE_ID", "250-PrivateKey=$SERVICE_KEY", "250 OK")
+        assertEquals("DEL_ONION $SERVICE_ID", f.transport.output.receive())
+        f.transport.feed("250 OK")
+        publish.join()
+
+        assertTrue(publish.isCancelled)
+        assertNull(f.service.address.value)
+        assertFalse(SERVICE_KEY in f.storage.files.getValue("onion-service-key.json"))
     }
 
     @Test fun identityForAnotherServiceIsRejected() = runTest {
@@ -105,7 +132,7 @@ class OnionServiceTest {
             """{"onion":"$OTHER_ONION","clientAuthPub":"$KEY","clientAuthPrivate":"$OTHER_KEY","displayName":"June"}"""
         val result = async { runCatching { f.service.publish(listOf(PeerAuthKey(KEY))) } }
         f.transport.expect(
-            "ADD_ONION $SERVICE_KEY Flags=DiscardPK Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY",
+            "ADD_ONION $SERVICE_KEY Flags=V3Auth,DiscardPK Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY",
             "250-ServiceID=$SERVICE_ID", "250 OK",
         )
         f.transport.expect("DEL_ONION $SERVICE_ID", "250 OK")
@@ -117,7 +144,7 @@ class OnionServiceTest {
         f.storage.files["onion-service-key.json"] = """{"privateKey":"$SERVICE_KEY"}"""
         val publish = async { f.service.publish(listOf(PeerAuthKey(KEY))) }
         f.transport.expect(
-            "ADD_ONION $SERVICE_KEY Flags=DiscardPK Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY",
+            "ADD_ONION $SERVICE_KEY Flags=V3Auth,DiscardPK Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY",
             "250-ServiceID=$SERVICE_ID", "250 OK",
         )
         publish.await()

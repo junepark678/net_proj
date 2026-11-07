@@ -23,14 +23,14 @@ class OnionCommandsTest {
 
     @Test fun firstRunRequestsANewKeyAndKeepsItSecretOnlyForTor() {
         assertEquals(
-            "ADD_ONION NEW:ED25519-V3 Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY ClientAuthV3=$OTHER_KEY",
+            "ADD_ONION NEW:ED25519-V3 Flags=V3Auth Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY ClientAuthV3=$OTHER_KEY",
             formatAddOnion(null, peers, 4242),
         )
     }
 
     @Test fun laterRunsReuseTheBlobAndDiscardTheEchoedKey() {
         assertEquals(
-            "ADD_ONION $SERVICE_KEY Flags=DiscardPK Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY",
+            "ADD_ONION $SERVICE_KEY Flags=V3Auth,DiscardPK Port=9999,127.0.0.1:4242 ClientAuthV3=$KEY",
             formatAddOnion(SERVICE_KEY, listOf(PeerAuthKey(KEY), PeerAuthKey(KEY.lowercase())), 4242),
         )
     }
