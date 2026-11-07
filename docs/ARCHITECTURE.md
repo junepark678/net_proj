@@ -24,6 +24,31 @@ net_proj/
 - Each device adds the peer's x25519 public key to its own onion service's
   `authorized_clients`, so only paired peers can even reach the rendezvous.
 
+The `shared` identity package accepts key material from the Tor key owner (#7);
+`IdentityStore.loadOrCreate` persists it without generating or rotating keys.
+`Identity.pairingPayload()` exports only public material. `PairingPayload.parse`
+returns a sealed success/failure result and validates the [v3 onion checksum](https://spec.torproject.org/rend-spec/encoding-onion-addresses.html),
+unpadded 32-byte base32 client-auth keys, framing, and a 200-character/UTF-8-byte
+budget. Display names may contain Unicode and spaces, but not semicolons or
+control characters; onion addresses must use lowercase.
+
+`directoryStorage(dataDirectory)` is the platform storage boundary. Android
+passes `Context.filesDir.path`; desktop passes an application-owned data path.
+Its JVM implementation is shared through `jvmSharedMain`, keeping `commonMain`
+free of platform APIs. JSON files are replaced atomically; identity files use
+owner-only permissions on POSIX filesystems. Use one `IdentityStore` and one
+`ContactStore` per directory. Corrupt or invalid files raise an error rather
+than silently replacing an identity or discarding peers.
+
+`ContactStore.open(storage, isOnline, republish)` exposes `contacts` as a
+`StateFlow` and provides `add`, `remove`, and `list`. Re-pairing the same onion
+updates that entry. The Tor owner supplies `isOnline` and a suspend `republish`
+callback that receives the complete set of public authorization keys after a
+persisted key-set change while online. On going online, #7 must read `list()`
+for offline changes. The callback also handles removals; it must not call back
+into the store. Publication errors propagate after the contact has been saved,
+so Tor can retry from the current list. Actual Tor publication awaits #7.
+
 ## Presence ("Go online") without push
 
 - Going online = start Tor (if not running), publish the onion service
