@@ -5,11 +5,33 @@
 from html import escape
 from pathlib import Path
 import shutil
+import struct
 import subprocess
+import zlib
 
 OUT = Path(__file__).resolve().parent
 W, H = 1000, 1660
 FONT = 'Noto Sans CJK KR'
+
+
+def set_png_resolution(png):
+    """Write deterministic 300 dpi metadata, replacing any renderer value."""
+    data = png.read_bytes()
+    payload = struct.pack('>IIB', 11811, 11811, 1)
+    chunk = b'pHYs' + payload
+    resolution = struct.pack('>I', len(payload)) + chunk + struct.pack('>I', zlib.crc32(chunk))
+    chunks = [data[:8]]
+    offset = 8
+    while offset < len(data):
+        length = struct.unpack_from('>I', data, offset)[0]
+        kind = data[offset+4:offset+8]
+        end = offset + length + 12
+        if kind != b'pHYs':
+            chunks.append(data[offset:end])
+        if kind == b'IHDR':
+            chunks.append(resolution)
+        offset = end
+    png.write_bytes(b''.join(chunks))
 
 
 def check_dependencies():
@@ -66,7 +88,7 @@ def generate():
     path('M135,315 V350 H850')
     path('M865,315 V385 H150')
     text(500, 335, '④ 양쪽에서 외향 UDP 전송')
-    path('M135,440 H865', 'media')
+    path('M100,315 V440 H900 V315', 'media')
     text(500, 422, '⑤ 홀 펀칭 성공 후 직접 미디어')
     text(500, 480, 'STUN 서버는 주소 확인에만 사용')
 
@@ -114,8 +136,10 @@ def generate():
     s.append('</svg>')
     svg = OUT / 'fig1_traversal.svg'
     svg.write_text('\n'.join(s)+'\n', encoding='utf-8')
+    png = OUT / 'fig1_traversal.png'
     subprocess.run(['rsvg-convert', '-d', '300', '-p', '300', '-o',
-                    str(OUT / 'fig1_traversal.png'), str(svg)], check=True)
+                    str(png), str(svg)], check=True)
+    set_png_resolution(png)
 
 
 if __name__ == '__main__':

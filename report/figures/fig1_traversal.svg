@@ -28,7 +28,7 @@
 <path d="M135,315 V350 H850" class="control"/>
 <path d="M865,315 V385 H150" class="control"/>
 <text x="500" y="335" class="" text-anchor="middle">④ 양쪽에서 외향 UDP 전송</text>
-<path d="M135,440 H865" class="media"/>
+<path d="M100,315 V440 H900 V315" class="media"/>
 <text x="500" y="422" class="" text-anchor="middle">⑤ 홀 펀칭 성공 후 직접 미디어</text>
 <text x="500" y="480" class="" text-anchor="middle">STUN 서버는 주소 확인에만 사용</text>
 <rect x="15" y="520" width="970" height="490" rx="8" class="panel"/>

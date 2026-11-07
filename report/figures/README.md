@@ -6,8 +6,10 @@ Requires Python 3, `rsvg-convert` from librsvg, fontconfig (`fc-list`), and
 Install these dependencies using your environment's supported provisioning method;
 no Python packages are required.
 
-The SVG is 15 × 24.9 cm; the PNG is rendered at 300 dpi. The smallest text
-is 21 SVG units, equivalent to 8.93 pt at 15 cm width. Print at actual size.
+The SVG is 15 × 24.9 cm; the PNG is rendered at 300 dpi and includes a pHYs
+resolution chunk set to 11811 pixels per metre (approximately 300 dpi).
+Insert the image at **15 cm width**, preserving its aspect ratio, and print at
+actual size. The smallest text is 21 SVG units, equivalent to 8.93 pt at that width.
 SVG text is editable and requires Noto Sans CJK KR on the viewing system;
 text is not converted to outlines. The PNG embeds the rendered glyphs and is
 portable without fonts. Conversion to paths would require another rendering
