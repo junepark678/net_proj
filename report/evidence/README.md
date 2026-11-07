@@ -1,6 +1,6 @@
 # Supplemental Android-to-desktop call evidence
 
-This directory contains one metrics-only Android emulator to desktop call. It is supplemental evidence, not a physical-network qualification.
+This directory contains two Android emulator to desktop attempts with endpoint metrics. They are supplemental evidence, not physical-network qualification.
 
 ## Trial 1 conditions
 
@@ -18,4 +18,21 @@ This directory contains one metrics-only Android emulator to desktop call. It is
 
 The high RTT and PLC counts make this a connected-call result, not evidence of conversationally usable audio. These measurements describe this emulator, host, and Tor route only.
 
-No screenshots, screen recording, or audio recording are included, following the user's instruction not to create visible capture artifacts. Issue #26 remains incomplete: physical devices/networks, both call directions, glare, camera-based QR pairing, exact Android bootstrap and call-setup timings, and the requested visual captures remain unverified or omitted.
+## Trial 2 conditions
+
+- Date: 2026-11-07 UTC (2026-11-08 KST).
+- Android endpoint: same API 35 x86_64 AVD (`sdk_gphone64_x86_64`, device `emu64xa`) as Trial 1.
+- Desktop endpoint: same Linux x86_64 host as Trial 1.
+- Tor: Android Guardian Project AAR `0.4.8.17.2`; desktop Tor `0.4.9.15`.
+- Network: the emulator and desktop shared one host and outbound NAT; no physical or independent NAT paths were involved.
+- Direction and pairing: Android initiated using a manually entered pairing payload; the desktop simulator auto-accepted. QR scanning, reverse direction, and glare were not exercised.
+- Media: the desktop transmitted a deterministic 440 Hz test tone and the emulator used its app audio-input path. No human listening evaluation or audio recording was made.
+- Desktop Tor bootstrap: 12.208 seconds. Desktop accepted the call and reached InCall 2.085 seconds later. Android bootstrap was complete before dialing; its elapsed time was not retained.
+- Android metrics: 18 unique one-second samples through `t_s=18`; zero RTT samples, 771 PLC frames, mean TX 26.52 kbps, mean RX 3.68 kbps. Received bitrate was zero for most samples after the initial seconds.
+- Desktop metrics: 60 one-second samples; six RTT samples, all 52,295 ms; 2,993 PLC frames, mean TX 27.62 kbps, mean RX 3.69 kbps. The desktop simulator ran for 60 seconds.
+
+Tor reported the Android SOCKS stream succeeded and the desktop entered the call, so this verifies connection setup. The Android metrics stop after 18 seconds and the measured RTT/PLC show unusable conversation quality on this route. Trial 2 does not satisfy the two-minute-call criterion; Trial 1 has two-minute endpoint CSVs, but both directions, glare, and human audio remain unverified.
+
+## Remaining evidence gaps
+
+No screenshots, screen recording, or audio recording are included, following the user's instruction not to create visible capture artifacts. Physical devices/networks, reverse-direction dialing, simultaneous-dial glare, camera-based QR pairing, exact Android bootstrap and tap-to-InCall durations, and human audio remain unverified. The desktop bootstrap and accept-to-InCall timing above are recorded, but they do not replace those missing measurements. Issue #26 remains open.
