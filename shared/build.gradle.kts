@@ -20,6 +20,11 @@ kotlin {
             api(libs.kotlinx.coroutines.core)
             api(libs.kotlinx.io.core)
         }
+        val jvmSharedMain by creating {
+            dependsOn(commonMain.get())
+        }
+        androidMain.get().dependsOn(jvmSharedMain)
+        getByName("desktopMain").dependsOn(jvmSharedMain)
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
