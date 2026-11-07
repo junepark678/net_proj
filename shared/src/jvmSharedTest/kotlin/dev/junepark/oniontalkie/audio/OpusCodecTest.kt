@@ -58,11 +58,11 @@ class OpusCodecTest {
             val sizes = (0 until 100).map { frame ->
                 codec.encode(if (silence) ShortArray(AudioConstants.SAMPLES_PER_FRAME) else toneFrame(frame)).size
             }
-            val average = sizes.average()
-            println("Opus silence=$silence average packet=$average bytes")
-            assertTrue(average in 50.0..70.0, "Average packet size was $average bytes")
-            // DTX must remain disabled even after sustained silence.
-            assertTrue(sizes.all { it >= 50 })
+            println("Opus silence=$silence packet sizes=${sizes.distinct()} bytes")
+            // Strict CBR at 24 kbps with 20 ms frames is exactly 60 bytes per
+            // packet, and DTX must remain disabled even after sustained silence.
+            val expected = AudioConstants.BITRATE * AudioConstants.FRAME_DURATION_MS / 8_000
+            assertTrue(sizes.all { it == expected }, "Expected every packet to be $expected bytes, got ${sizes.distinct()}")
         }
     }
 
@@ -74,8 +74,9 @@ class OpusCodecTest {
         assertContentEquals(ShortArray(out.size), out)
         repeat(20) { codec.decode(codec.encode(toneFrame(it)), out) }
         repeat(5) {
+            out.fill(Short.MAX_VALUE)
             assertEquals(out.size, codec.decode(null, out))
-            assertTrue(out.any { it != Short.MAX_VALUE })
+            assertTrue(out.any { it != Short.MAX_VALUE }, "PLC must write the output buffer")
         }
         repeat(20) { codec.decode(codec.encode(toneFrame(it + 25)), out) }
         assertTrue(out.any { it.toInt() != 0 }, "Audio should resume after loss")
