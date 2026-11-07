@@ -18,21 +18,29 @@ kotlin {
     applyDefaultHierarchyTemplate()
 
     applyDefaultHierarchyTemplate()
-
     sourceSets {
         commonMain.dependencies {
             api(libs.kotlinx.coroutines.core)
             api(libs.kotlinx.io.core)
             implementation(libs.kotlinx.serialization.json)
         }
-        val jvmSharedMain by creating {
-            dependsOn(commonMain.get())
-        }
-        androidMain.get().dependsOn(jvmSharedMain)
-        getByName("desktopMain").dependsOn(jvmSharedMain)
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
         }
+        val jvmSharedMain by creating {
+            dependsOn(commonMain.get())
+            dependencies {
+                implementation(libs.concentus)
+            }
+        }
+        androidMain.get().dependsOn(jvmSharedMain)
+        getByName("desktopMain").dependsOn(jvmSharedMain)
+
+        val jvmSharedTest by creating {
+            dependsOn(commonTest.get())
+        }
+        getByName("androidHostTest").dependsOn(jvmSharedTest)
+        getByName("desktopTest").dependsOn(jvmSharedTest)
     }
 }

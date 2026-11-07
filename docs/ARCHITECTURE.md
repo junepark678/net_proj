@@ -6,9 +6,11 @@
 net_proj/
 ├── shared/            KMP library: protocol, codec, call engine, Tor control, metrics
 │   ├── commonMain/    pure Kotlin; no platform APIs
+│   ├── jvmSharedMain/ Concentus codec shared by Android and desktop
 │   ├── androidMain/   AudioRecord/AudioTrack, tor-android process, foreground service glue
 │   ├── desktopMain/   javax.sound.sampled, Tor Expert Bundle process
-│   └── commonTest/    protocol/jitter/codec/state-machine tests (run on JVM)
+│   ├── commonTest/    protocol/jitter/state-machine tests (run on JVM)
+│   └── jvmSharedTest/ codec tests and micro-benchmark (both JVM targets)
 ├── ui/                Compose Multiplatform screens + view models (shared)
 ├── androidApp/        Android entry point, foreground service, QR scan
 ├── desktopApp/        JVM desktop entry point, QR display/import
@@ -109,6 +111,16 @@ mic → 48 kHz mono PCM (20 ms = 960 samples) → Opus encode (24 kbps, VoIP mod
 Tor → TCP → deframer → adaptive jitter buffer (target = p95 inter-arrival, min 60 ms,
     max 1500 ms, PLC on gaps via Opus decode(null)) → Opus decode → speaker
 ```
+
+The common `dev.junepark.oniontalkie.shared.audio.AudioConstants` object owns the
+shared audio format and Opus settings for the codec and platform audio I/O (#13).
+`OpusCodec.decode` and `decodeFec` return the sample count written. When the next
+packet arrives before a lost frame's playout deadline, `decodeFec(nextPacket, out)`
+recovers that frame from LBRR data (or falls back to PLC when absent); decode the
+same next packet normally afterward. Use `decode(null, out)` when it is unavailable.
+One encode thread and one decode thread may share a call's codec; each direction
+is independently single-threaded. Malformed payloads rejected by Concentus throw
+`OpusException`.
 
 ## Tor lifecycle
 
