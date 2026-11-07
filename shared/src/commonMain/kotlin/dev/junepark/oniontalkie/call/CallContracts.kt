@@ -71,6 +71,9 @@ fun interface CallSessionFactory {
 interface CallSession {
     suspend fun run(sendAudio: suspend (Frame.Audio) -> Unit)
     suspend fun receive(frame: Frame.Audio)
+    /** Observability hooks; a metrics sink failure must not be allowed to fail a call. */
+    suspend fun onFrameSent(frame: Frame) {}
+    suspend fun onFrameReceived(frame: Frame) {}
     suspend fun close()
 }
 

@@ -358,7 +358,9 @@ class CallEngine(
             }
         }
         while (!session.end.isCompleted) {
-            when (val frame = frames.receiveCatching().getOrThrowOrNull()) {
+            val frame = frames.receiveCatching().getOrThrowOrNull()
+            if (frame != null) checkNotNull(session.media).onFrameReceived(frame)
+            when (frame) {
                 is Frame.Audio -> {
                     activity.withLock { lastActivity = clockMillis() }
                     checkNotNull(session.media).receive(frame)
@@ -402,7 +404,10 @@ class CallEngine(
         suspend fun write(frame: Frame, final: Boolean = false) = writes.withLock {
             if (final || !end.isCompleted) {
                 val transport = resources.withLock { channel.takeUnless { transportClosed } }
-                transport?.let { FrameWriter(it).write(frame) }
+                transport?.let {
+                    FrameWriter(it).write(frame)
+                    media?.onFrameSent(frame)
+                }
             }
         }
 

@@ -1,14 +1,21 @@
 package dev.junepark.oniontalkie.desktop
 
+import dev.junepark.oniontalkie.call.CallState
+import dev.junepark.oniontalkie.call.JvmOnionCallRuntime
+import dev.junepark.oniontalkie.identity.Contact
 import dev.junepark.oniontalkie.identity.appDataDir
+import dev.junepark.oniontalkie.identity.PairingResult
+import dev.junepark.oniontalkie.metrics.CallStats
 import dev.junepark.oniontalkie.tor.JvmControlTransport
 import dev.junepark.oniontalkie.tor.TorConfig
 import dev.junepark.oniontalkie.tor.TorControl
 import dev.junepark.oniontalkie.tor.TorProcess
-import dev.junepark.oniontalkie.ui.AppPresenceController
+import dev.junepark.oniontalkie.ui.OnionDialController
 import dev.junepark.oniontalkie.ui.AppPresenceState
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.awt.Desktop
+import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,14 +30,28 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
-class DesktopTorController : AppPresenceController, AutoCloseable {
+class DesktopTorController : OnionDialController, AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableState = MutableStateFlow<AppPresenceState>(AppPresenceState.Offline)
     private var lifecycleJob: Job? = null
     private var process: TorProcess? = null
     private var control: TorControl? = null
+    private var callRuntime: JvmOnionCallRuntime? = null
+    private val mutableCallState = MutableStateFlow<CallState>(CallState.Offline)
+    private val mutableContacts = MutableStateFlow<List<Contact>>(emptyList())
+    private val mutableOnionAddress = MutableStateFlow<String?>(null)
+    private val mutablePairingText = MutableStateFlow<String?>(null)
+    private val mutableMetricsStats = MutableStateFlow<CallStats?>(null)
+    private val mutableMetricsCsvPath = MutableStateFlow<String?>(null)
+    private val runtimeJobs = mutableListOf<Job>()
 
     override val state: StateFlow<AppPresenceState> = mutableState.asStateFlow()
+    override val callState: StateFlow<CallState> = mutableCallState.asStateFlow()
+    override val contacts: StateFlow<List<Contact>> = mutableContacts.asStateFlow()
+    override val onionAddress: StateFlow<String?> = mutableOnionAddress.asStateFlow()
+    override val pairingText: StateFlow<String?> = mutablePairingText.asStateFlow()
+    override val metricsStats: StateFlow<CallStats?> = mutableMetricsStats.asStateFlow()
+    override val metricsCsvPath: StateFlow<String?> = mutableMetricsCsvPath.asStateFlow()
 
     override fun startTor() {
         if (lifecycleJob?.isActive == true) return
@@ -60,8 +81,26 @@ class DesktopTorController : AppPresenceController, AutoCloseable {
             val cookiePath = Paths.get(config.dataDir, "control_auth_cookie")
             connected.authenticate(Files.readAllBytes(cookiePath))
             connected.bootstrap.collect { progress ->
-                mutableState.value = if (progress >= BOOTSTRAP_COMPLETE) AppPresenceState.TorReady
-                else AppPresenceState.Bootstrapping(progress)
+                if (progress >= BOOTSTRAP_COMPLETE && callRuntime == null) {
+                    val runtime = JvmOnionCallRuntime.open(
+                        control = connected,
+                        socksPort = launched.socksPort,
+                        dataDirectory = config.dataDir,
+                        displayName = System.getProperty("user.name")?.takeIf { it.isNotBlank() } ?: "Onion Dial",
+                        scope = scope,
+                    )
+                    callRuntime = runtime
+                    runtimeJobs += scope.launch { runtime.callState.collect { mutableCallState.value = it } }
+                    runtimeJobs += scope.launch { runtime.contacts.collect { mutableContacts.value = it } }
+                    runtimeJobs += scope.launch { runtime.onionAddress.collect { mutableOnionAddress.value = it } }
+                    runtimeJobs += scope.launch { runtime.pairingText.collect { mutablePairingText.value = it } }
+                    runtimeJobs += scope.launch { runtime.metricsStats.collect { mutableMetricsStats.value = it } }
+                    runtimeJobs += scope.launch { runtime.metricsCsvPath.collect { mutableMetricsCsvPath.value = it } }
+                    runtime.goOnline()
+                    mutableState.value = AppPresenceState.TorReady
+                } else if (progress < BOOTSTRAP_COMPLETE) {
+                    mutableState.value = AppPresenceState.Bootstrapping(progress)
+                }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -73,6 +112,20 @@ class DesktopTorController : AppPresenceController, AutoCloseable {
     }
 
     private suspend fun releaseResources() {
+        try {
+            callRuntime?.shutdown()
+        } catch (_: Exception) {
+            // Continue closing the Tor control port and process if a call resource fails to close.
+        }
+        callRuntime = null
+        runtimeJobs.forEach(Job::cancel)
+        runtimeJobs.clear()
+        mutableCallState.value = CallState.Offline
+        mutableContacts.value = emptyList()
+        mutableOnionAddress.value = null
+        mutablePairingText.value = null
+        mutableMetricsStats.value = null
+        mutableMetricsCsvPath.value = null
         control?.close()
         control = null
         val running = process ?: return
@@ -94,6 +147,21 @@ class DesktopTorController : AppPresenceController, AutoCloseable {
         releaseResources()
         mutableState.value = AppPresenceState.Offline
         lifecycleJob = null
+    }
+
+    override suspend fun importPairing(text: String): PairingResult? = callRuntime?.importPairing(text)
+    override suspend fun removeContact(peerOnion: String): Boolean = callRuntime?.removeContact(peerOnion) ?: false
+    override suspend fun dial(peerOnion: String): Boolean = callRuntime?.dial(peerOnion) ?: false
+    override suspend fun acceptCall(): Boolean = callRuntime?.accept() ?: false
+    override suspend fun declineCall(): Boolean = callRuntime?.decline() ?: false
+    override suspend fun hangUp(): Boolean = callRuntime?.hangUp() ?: false
+    override fun shareMetrics() {
+        val file = mutableMetricsCsvPath.value?.let(::File) ?: return
+        try {
+            if (Desktop.isDesktopSupported()) Desktop.getDesktop().open(file.parentFile)
+        } catch (_: Exception) {
+            // The CSV path remains visible and copyable in the UI.
+        }
     }
 
     private companion object {

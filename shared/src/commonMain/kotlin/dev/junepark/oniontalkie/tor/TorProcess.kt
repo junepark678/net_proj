@@ -79,7 +79,7 @@ internal fun quoteTorrcPath(path: String): String {
 
 /** Generated for each run so control and SOCKS ports are local-only and OS-assigned. */
 internal fun renderTorrc(config: TorConfig, controlPortFile: String): String = buildString {
-    appendLine("SocksPort 127.0.0.1:auto")
+    appendLine("SocksPort 127.0.0.1:auto ExtendedErrors")
     appendLine("ControlPort 127.0.0.1:auto")
     appendLine("CookieAuthentication 1")
     appendLine("ControlPortWriteToFile ${quoteTorrcPath(controlPortFile)}")

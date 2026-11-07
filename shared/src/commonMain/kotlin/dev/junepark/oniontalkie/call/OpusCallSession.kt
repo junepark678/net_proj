@@ -13,7 +13,12 @@ import dev.junepark.oniontalkie.audio.createAudioInput
 import dev.junepark.oniontalkie.audio.createAudioOutput
 import dev.junepark.oniontalkie.audio.createOpusCodec
 import dev.junepark.oniontalkie.audio.frames
+import dev.junepark.oniontalkie.metrics.CallStats
+import dev.junepark.oniontalkie.metrics.MetricsLogger
+import dev.junepark.oniontalkie.metrics.MetricsSink
 import dev.junepark.oniontalkie.protocol.Frame
+import dev.junepark.oniontalkie.protocol.FrameCodec
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -27,6 +32,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -57,6 +63,8 @@ class OpusCallSessionFactory(
     private val clockMs: () -> Long = monotonicMillis(),
     private val playoutDelay: suspend (Long) -> Unit = { delay(it) },
     private val metricsListener: (peerOnion: String, metrics: CallMediaMetrics) -> Unit = { _, _ -> },
+    private val metricsSinkFactory: (peerOnion: String) -> MetricsSink? = { null },
+    private val metricsStatsListener: (peerOnion: String, stats: CallStats) -> Unit = { _, _ -> },
 ) : CallSessionFactory {
     override fun create(peerOnion: String): CallSession = OpusCallSession(
         peerOnion = peerOnion,
@@ -68,6 +76,8 @@ class OpusCallSessionFactory(
         clockMs = clockMs,
         playoutDelay = playoutDelay,
         metricsListener = metricsListener,
+        metricsSinkFactory = metricsSinkFactory,
+        metricsStatsListener = metricsStatsListener,
     )
 }
 
@@ -81,6 +91,8 @@ private class OpusCallSession(
     private val clockMs: () -> Long,
     private val playoutDelay: suspend (Long) -> Unit,
     private val metricsListener: (String, CallMediaMetrics) -> Unit,
+    private val metricsSinkFactory: (String) -> MetricsSink?,
+    private val metricsStatsListener: (String, CallStats) -> Unit,
 ) : CallSession {
     private val incomingQueueDrops = MutableStateFlow(0L)
     private val outgoingQueueDrops = MutableStateFlow(0L)
@@ -91,8 +103,13 @@ private class OpusCallSession(
     )
     private val jitterBuffer = JitterBuffer(clockMs = clockMs)
     private val lifecycle = Mutex()
+    private val metricsLifecycle = Mutex()
     private var running = false
     private var closed = false
+    private var metricsLogger: MetricsLogger? = null
+    private var metricsStatsJob: kotlinx.coroutines.Job? = null
+    private var lastMetricsLate = 0L
+    private var lastMetricsPlc = 0L
 
     override suspend fun run(sendAudio: suspend (Frame.Audio) -> Unit) {
         lifecycle.withLock {
@@ -104,6 +121,7 @@ private class OpusCallSession(
         var routeStarted = false
         try {
             withContext(audioDispatcher) {
+                startMetrics()
                 routeController.beginCommunication()
                 routeStarted = true
                 output.start()
@@ -114,6 +132,7 @@ private class OpusCallSession(
                 runCatching { input.stop() }
                 runCatching { output.stop() }
                 if (routeStarted) runCatching { routeController.endCommunication() }
+                closeMetrics()
                 lifecycle.withLock { running = false }
             }
         }
@@ -124,6 +143,24 @@ private class OpusCallSession(
         incoming.trySend(frame)
     }
 
+    override suspend fun onFrameSent(frame: Frame) {
+        withMetrics { logger ->
+            logger.onTransportBytes(sent = FrameCodec.encode(frame).size.toLong())
+            if (frame is Frame.Ping) logger.onPingSent(frame.tsMs.toLong(), clockMs())
+        }
+    }
+
+    override suspend fun onFrameReceived(frame: Frame) {
+        withMetrics { logger ->
+            logger.onTransportBytes(received = FrameCodec.encode(frame).size.toLong())
+            when (frame) {
+                is Frame.Audio -> logger.onAudioReceived(frame.seq.toInt(), frame.tsMs.toLong(), clockMs())
+                is Frame.Pong -> logger.onPong(frame.echoedTsMs.toLong(), clockMs())
+                else -> Unit
+            }
+        }
+    }
+
     override suspend fun close() {
         withContext(NonCancellable) {
             lifecycle.withLock {
@@ -132,6 +169,7 @@ private class OpusCallSession(
                 incoming.close()
                 runCatching { input.stop() }
                 runCatching { output.stop() }
+                closeMetrics()
             }
         }
     }
@@ -203,9 +241,15 @@ private class OpusCallSession(
         }
     }
 
-    private fun publishMetrics() {
+    private suspend fun publishMetrics() {
+        val buffer = jitterBuffer.metrics
+        val lateDelta = (buffer.late - lastMetricsLate).coerceAtLeast(0)
+        val plcDelta = (buffer.plc - lastMetricsPlc).coerceAtLeast(0)
+        lastMetricsLate = buffer.late
+        lastMetricsPlc = buffer.plc
+        withMetrics { logger -> logger.onPlayout(buffer.bufferMs.toDouble(), lateDelta, plcDelta) }
         val snapshot = CallMediaMetrics(
-            jitterBuffer = jitterBuffer.metrics,
+            jitterBuffer = buffer,
             hardwareUnderruns = output.underrunCount,
             incomingQueueDrops = incomingQueueDrops.value,
             outgoingQueueDrops = outgoingQueueDrops.value,
@@ -214,6 +258,40 @@ private class OpusCallSession(
             metricsListener(peerOnion, snapshot)
         } catch (_: Exception) {
             // Observability must not interrupt capture or playout.
+        }
+    }
+
+    private suspend fun startMetrics() {
+        try {
+            val sink = metricsSinkFactory(peerOnion) ?: return
+            val loggerScope = CoroutineScope(currentCoroutineContext())
+            val logger = MetricsLogger(sink, loggerScope, clockMs)
+            metricsLifecycle.withLock { metricsLogger = logger }
+            metricsStatsJob = loggerScope.launch {
+                logger.stats.collect { stats ->
+                    try { metricsStatsListener(peerOnion, stats) } catch (_: Exception) { }
+                }
+            }
+        } catch (_: Exception) {
+            // Metrics output is best-effort and must not prevent the voice session from starting.
+        }
+    }
+
+    private suspend fun withMetrics(block: suspend (MetricsLogger) -> Unit) {
+        val logger = metricsLifecycle.withLock { metricsLogger } ?: return
+        try { block(logger) } catch (_: Exception) {
+            // A failed metrics sink must not interrupt audio or transport handling.
+        }
+    }
+
+    private suspend fun closeMetrics() {
+        metricsStatsJob?.cancelAndJoin()
+        metricsStatsJob = null
+        val logger = metricsLifecycle.withLock {
+            metricsLogger.also { metricsLogger = null }
+        } ?: return
+        try { logger.close() } catch (_: Exception) {
+            // Keep media teardown independent from a failed summary write.
         }
     }
 

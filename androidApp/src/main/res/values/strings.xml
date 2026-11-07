@@ -13,4 +13,15 @@
     <string name="continue_label">Continue</string>
     <string name="cancel_label">Cancel</string>
     <string name="notification_permission_denied">Notifications are needed to start Tor.</string>
+    <string name="default_display_name">Android user</string>
+    <string name="microphone_permission_title">Allow microphone for calls</string>
+    <string name="microphone_permission_message">Onion Dial needs microphone access to place and answer voice calls.</string>
+    <string name="microphone_permission_denied">Microphone access is needed for calls.</string>
+    <string name="incoming_call_channel_name">Incoming calls</string>
+    <string name="incoming_call_title">Onion Dial call</string>
+    <string name="incoming_call_from">Incoming call from %1$s</string>
+    <string name="answer_call">Answer</string>
+    <string name="decline_call">Decline</string>
+    <string name="share_metrics_title">Share Onion Dial call metrics</string>
+    <string name="metrics_file_unavailable">Call metrics are not available yet.</string>
 </resources>

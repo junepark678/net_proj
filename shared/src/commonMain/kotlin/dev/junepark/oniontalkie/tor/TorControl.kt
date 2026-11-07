@@ -21,7 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 
 /** Signals exposed by the control client. NEWNYM remains subject to Tor's rate limiting. */
-enum class TorSignal { NEWNYM, SHUTDOWN }
+enum class TorSignal { NEWNYM, RELOAD, SHUTDOWN }
 
 /** Cookie-authenticated Tor control-port client. Construct with a fresh transport and an owned
  * coroutine scope. Cancelling that scope or calling [close] releases the transport. Commands
