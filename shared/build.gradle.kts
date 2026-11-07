@@ -16,6 +16,21 @@ kotlin {
     jvm("desktop")
 
     sourceSets {
+        // Concentus is a plain JVM jar, so it cannot live in commonMain. Both
+        // targets are JVM, hence one intermediate source set serves them both.
+        val jvmSharedMain by creating {
+            dependsOn(commonMain.get())
+            dependencies {
+                implementation(libs.concentus)
+            }
+        }
+        val jvmSharedTest by creating {
+            dependsOn(commonTest.get())
+        }
+        androidMain.get().dependsOn(jvmSharedMain)
+        getByName("desktopMain").dependsOn(jvmSharedMain)
+        getByName("androidHostTest").dependsOn(jvmSharedTest)
+        getByName("desktopTest").dependsOn(jvmSharedTest)
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }
