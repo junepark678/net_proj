@@ -47,7 +47,7 @@ import dev.junepark.oniontalkie.identity.PairingResult
 import kotlinx.coroutines.launch
 
 @Composable
-fun App(controller: OnionDialController) {
+fun App(controller: OnionDialController, pairingQrAction: PairingQrAction? = null) {
     val presence by controller.state.collectAsState()
     val call by controller.callState.collectAsState()
     val contacts by controller.contacts.collectAsState()
@@ -127,6 +127,22 @@ fun App(controller: OnionDialController) {
                     if (korean) "상대방의 Onion Dial 페어링 코드를 붙여 넣으세요." else "Paste the other person's Onion Dial pairing code.",
                     style = bodyStyle(),
                 )
+                if (pairingQrAction != null) {
+                    Spacer(Modifier.height(8.dp))
+                    ActionButton(
+                        label = if (korean) pairingQrAction.labelKo else pairingQrAction.label,
+                        onClick = {
+                            pairingQrAction.launch { decoded ->
+                                pairingInput = decoded
+                                feedback = if (korean) "QR 코드에서 페어링 코드를 읽었습니다." else "Read pairing code from QR."
+                            }
+                        },
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                SmallAction(if (korean) "클립보드에서 붙여넣기" else "Paste from clipboard", enabled = true) {
+                    pairingInput = clipboard.getText()?.text.orEmpty()
+                }
                 Spacer(Modifier.height(8.dp))
                 BasicTextField(
                     value = pairingInput,

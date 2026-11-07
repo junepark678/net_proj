@@ -19,6 +19,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import dev.junepark.oniontalkie.ui.App
 import dev.junepark.oniontalkie.ui.AppPresenceState
 import dev.junepark.oniontalkie.ui.OnionDialController
+import dev.junepark.oniontalkie.ui.PairingQrAction
 import dev.junepark.oniontalkie.call.CallState
 import dev.junepark.oniontalkie.identity.Contact
 import dev.junepark.oniontalkie.identity.PairingResult
@@ -32,6 +33,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 class MainActivity : ComponentActivity(), OnionDialController {
     private val mutableState = MutableStateFlow<AppPresenceState>(AppPresenceState.Offline)
@@ -54,6 +57,7 @@ class MainActivity : ComponentActivity(), OnionDialController {
     private var stateJob: Job? = null
     private val serviceJobs = mutableListOf<Job>()
     private var bound = false
+    private var pendingPairingScan: ((String) -> Unit)? = null
 
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -73,6 +77,21 @@ class MainActivity : ComponentActivity(), OnionDialController {
             R.string.microphone_permission_denied,
             Toast.LENGTH_LONG,
         ).show()
+    }
+
+    private val pairingCameraPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) launchPairingScanner() else {
+            pendingPairingScan = null
+            Toast.makeText(this, R.string.camera_permission_denied, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private val pairingScanner = registerForActivityResult(ScanContract()) { result ->
+        val callback = pendingPairingScan
+        pendingPairingScan = null
+        result.contents?.let { callback?.invoke(it) }
     }
 
     private val serviceConnection = object : ServiceConnection {
@@ -112,7 +131,16 @@ class MainActivity : ComponentActivity(), OnionDialController {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { App(controller = this) }
+        setContent {
+            App(
+                controller = this,
+                pairingQrAction = PairingQrAction(
+                    label = "Scan QR code",
+                    labelKo = "QR 코드 스캔",
+                    launch = ::requestPairingScan,
+                ),
+            )
+        }
     }
 
     override fun onStart() {
@@ -197,6 +225,32 @@ class MainActivity : ComponentActivity(), OnionDialController {
             }
             .setNegativeButton(R.string.cancel_label, null)
             .show()
+    }
+
+    private fun requestPairingScan(onDecoded: (String) -> Unit) {
+        pendingPairingScan = onDecoded
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            launchPairingScanner()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.camera_permission_title)
+            .setMessage(R.string.camera_permission_message)
+            .setPositiveButton(R.string.continue_label) { _, _ ->
+                pairingCameraPermission.launch(Manifest.permission.CAMERA)
+            }
+            .setNegativeButton(R.string.cancel_label) { _, _ -> pendingPairingScan = null }
+            .show()
+    }
+
+    private fun launchPairingScanner() {
+        pairingScanner.launch(
+            ScanOptions()
+                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setPrompt(getString(R.string.scan_pairing_qr_prompt))
+                .setBeepEnabled(false)
+                .setOrientationLocked(false),
+        )
     }
 
     private companion object {

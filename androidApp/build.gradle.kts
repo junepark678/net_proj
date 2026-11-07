@@ -40,6 +40,7 @@ dependencies {
     implementation(project(":shared"))
     implementation(libs.androidx.activity.compose)
     implementation(libs.tor.android)
+    implementation(libs.zxing.android.embedded)
     androidTestImplementation(project(":shared"))
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)

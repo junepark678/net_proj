@@ -12,6 +12,7 @@ dependencies {
     implementation(project(":ui"))
     implementation(project(":shared"))
     implementation(compose.desktop.currentOs)
+    implementation(libs.zxing.core)
 }
 
 compose.desktop {

@@ -6,6 +6,13 @@ import dev.junepark.oniontalkie.identity.PairingResult
 import dev.junepark.oniontalkie.metrics.CallStats
 import kotlinx.coroutines.flow.StateFlow
 
+/** Platform QR input action that returns decoded pairing text to the shared UI. */
+data class PairingQrAction(
+    val label: String,
+    val labelKo: String,
+    val launch: (onDecoded: (String) -> Unit) -> Unit,
+)
+
 /** Runtime calls and pairing actions shared by Android and desktop shells. */
 interface OnionDialController : AppPresenceController {
     val callState: StateFlow<CallState>

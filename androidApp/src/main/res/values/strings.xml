@@ -24,4 +24,8 @@
     <string name="decline_call">Decline</string>
     <string name="share_metrics_title">Share Onion Dial call metrics</string>
     <string name="metrics_file_unavailable">Call metrics are not available yet.</string>
+    <string name="camera_permission_title">Allow camera for QR pairing</string>
+    <string name="camera_permission_message">Onion Dial uses the camera only to read a contact QR code. You can also enter the code manually.</string>
+    <string name="camera_permission_denied">Camera access was not granted. You can enter the pairing code manually.</string>
+    <string name="scan_pairing_qr_prompt">Point the camera at an Onion Dial pairing QR code</string>
 </resources>

@@ -24,4 +24,8 @@
     <string name="decline_call">거절</string>
     <string name="share_metrics_title">Onion Dial 통화 측정 공유</string>
     <string name="metrics_file_unavailable">아직 공유할 통화 측정 파일이 없습니다.</string>
+    <string name="camera_permission_title">QR 페어링을 위해 카메라 허용</string>
+    <string name="camera_permission_message">Onion Dial은 연락처의 페어링 QR 코드를 읽을 때만 카메라를 사용합니다. 코드를 직접 입력할 수도 있습니다.</string>
+    <string name="camera_permission_denied">카메라 권한이 없습니다. 페어링 코드를 직접 입력할 수 있습니다.</string>
+    <string name="scan_pairing_qr_prompt">카메라를 Onion Dial 페어링 QR 코드에 맞추세요</string>
 </resources>
