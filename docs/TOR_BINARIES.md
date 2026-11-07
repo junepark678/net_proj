@@ -1,6 +1,18 @@
 # Tor binary sources
 
-The desktop bundle is fetched into `build/tor/` and SHA-256 verified by `tools/fetch_tor.sh`. Native distribution tasks stage the host bundle in application resources at `lib/app/resources/tor/<platform>/`; `TorProcess` checks `compose.application.resources.dir` before the development bundle directory or `PATH`. It writes a private torrc, launches the bundled executable, authenticates to its automatically assigned control port, and queries `GETINFO net/listeners/socks` for the SOCKS port. The Android helper uses the extracted `libtor.so` from the pinned AAR and stores Tor state under `filesDir/tor`. Android runtime launch still needs emulator verification.
+The desktop bundle is fetched into `build/tor/` and SHA-256 verified by
+`tools/fetch_tor.sh`. Native distribution tasks stage the host bundle in
+application resources at `lib/app/resources/tor/<platform>/`; `TorProcess`
+checks `compose.application.resources.dir` before the development bundle
+directory or `PATH`. It writes a private torrc, launches the bundled executable,
+authenticates to its automatically assigned control port, and queries
+`GETINFO net/listeners/socks` for the SOCKS port.
+
+The Android helper uses the extracted `libtor.so` from the pinned AAR and stores
+Tor state under `filesDir/tor`. The Android runtime path was verified on an API
+35 x86_64 emulator by starting the packaged daemon, authenticating to the
+generated control port, and discovering the SOCKS listener. This startup check
+does not wait for network bootstrap or qualify a full app-to-app call.
 
 Verified 2026-11-07 against [Tor's download page](https://www.torproject.org/download/tor/) and [dist.torproject.org](https://dist.torproject.org/torbrowser/16.0/). Current listed stable Expert Bundle: **16.0**. Distribution archive name is `tor-expert-bundle-<platform>-16.0.tar.gz`; extraction includes `tor/tor`, `tor/libevent...`, and data files including `data/geoip` and `data/geoip6`.
 
