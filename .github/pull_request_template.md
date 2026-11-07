@@ -1,8 +1,10 @@
 ## Summary
 
-<!-- What changed and why. Link the issue: "Closes #N". -->
+<!-- What changed and why. Include a tracker link such as "Closes #N". -->
 
 ## Verification
+
+### How verified
 
 <!-- Commands run and their results. Unit tests, emulator runs, Tor loopback, etc. -->
 
