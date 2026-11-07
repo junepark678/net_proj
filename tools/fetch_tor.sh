@@ -18,17 +18,37 @@ case "$platform" in
  macos-aarch64) sha=b8da251eccbe9e82f3681ee3af3c97fb4291c4a4e153e5b824bde48a1117cd6a ;;
  windows-x86_64) sha=2ee123e9167318a3742778ff704e75f01d4780f05a14522d451fe011011077c4 ;;
 esac
+executable=tor
+[[ "$platform" != windows-* ]] || executable=tor.exe
+if command -v sha256sum >/dev/null 2>&1; then
+  checksum=(sha256sum)
+elif command -v shasum >/dev/null 2>&1; then
+  checksum=(shasum -a 256)
+else
+  echo 'SHA-256 verification requires sha256sum or shasum' >&2
+  exit 1
+fi
 name="tor-expert-bundle-${platform}-${version}.tar.gz"
 target="build/tor/${platform}"
-mkdir -p "$target"
-if [[ -x "$target/tor/tor" ]] && [[ "$(sha256sum "$target/.archive" 2>/dev/null | cut -d' ' -f1 || true)" == "$sha" ]]; then exit 0; fi
+marker="$target/.completed-sha256"
+if [[ -x "$target/tor/$executable" && -d "$target/data" && -d "$target/docs" && -f "$marker" ]] &&
+   [[ "$(cat "$marker")" == "$sha" ]]; then
+  echo "Using cached Tor bundle: $target"
+  exit 0
+fi
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 curl -fL --retry 3 "$base/$name" -o "$tmp/$name"
-echo "$sha  $tmp/$name" | sha256sum -c -
+printf '%s  %s\n' "$sha" "$tmp/$name" | "${checksum[@]}" -c -
 tar -xzf "$tmp/$name" -C "$tmp"
-root=$(find "$tmp" -type f -path '*/tor/tor' -print -quit)
+root=$(find "$tmp" -type f -path "*/tor/$executable" -print -quit)
 [[ -n "$root" ]] || { echo 'tor executable not found in archive' >&2; exit 1; }
-rm -rf "$target/tor"
-cp -a "${root%/tor/tor}/tor" "$target/tor"
-chmod +x "$target/tor/tor"
-printf '%s' "$sha" > "$target/.archive"
+bundle=${root%/tor/*}
+[[ -d "$bundle/data" && -d "$bundle/docs" ]] || {
+  echo 'data or docs directory not found in archive' >&2; exit 1;
+}
+mkdir -p "$target"
+rm -f "$marker" "$target/.archive"
+rm -rf "$target/tor" "$target/data" "$target/docs"
+cp -a "$bundle/tor" "$bundle/data" "$bundle/docs" "$target/"
+chmod +x "$target/tor/$executable"
+printf '%s\n' "$sha" > "$marker"
