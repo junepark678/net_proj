@@ -24,3 +24,4 @@ report/out/
 *.log
 __pycache__/
 *.pyc
+/build/tor/
