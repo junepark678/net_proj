@@ -6,9 +6,11 @@
 net_proj/
 ├── shared/            KMP library: protocol, codec, call engine, Tor control, metrics
 │   ├── commonMain/    pure Kotlin; no platform APIs
+│   ├── jvmSharedMain/ Concentus codec shared by Android and desktop
 │   ├── androidMain/   AudioRecord/AudioTrack, tor-android process, foreground service glue
 │   ├── desktopMain/   javax.sound.sampled, Tor Expert Bundle process
-│   └── commonTest/    protocol/jitter/codec/state-machine tests (run on JVM)
+│   ├── commonTest/    protocol/jitter/state-machine tests (run on JVM)
+│   └── jvmSharedTest/ codec tests and micro-benchmark (both JVM targets)
 ├── ui/                Compose Multiplatform screens + view models (shared)
 ├── androidApp/        Android entry point, foreground service, QR scan
 ├── desktopApp/        JVM desktop entry point, QR display/import

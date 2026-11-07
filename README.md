@@ -31,7 +31,7 @@ classic relays (TURN).
 | Layer | Choice |
 | --- | --- |
 | Language / UI | Kotlin Multiplatform + Compose Multiplatform (Android, desktop JVM) |
-| Codec | Opus via Concentus (pure JVM port) in `commonMain` |
+| Codec | Common `OpusCodec` API; Concentus (pure JVM port) in `jvmSharedMain` |
 | Transport | Tor: `tor-android` AAR (Android), Tor Expert Bundle (desktop); driven over the control port from common code |
 | Audio I/O | `expect`/`actual`: AudioRecord/AudioTrack (Android), `javax.sound.sampled` (desktop) |
 | CI | GitHub Actions: JVM unit tests, Android build, AOSP emulator instrumentation tests, desktop smoke test |
