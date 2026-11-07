@@ -1,31 +1,123 @@
 #!/usr/bin/env python3
-"""Generate Figure 1 as SVG and 300 dpi PNG; requires librsvg's rsvg-convert."""
+"""Generate SVG + 300 dpi PNG. Requires rsvg-convert (librsvg), fontconfig,
+ and Noto Sans CJK KR. SVG text remains editable; see README.md for font setup.
+"""
+from html import escape
 from pathlib import Path
+import shutil
 import subprocess
 
 OUT = Path(__file__).resolve().parent
-W,H=1772,900
-s=['''<svg xmlns="http://www.w3.org/2000/svg" width="15cm" height="7.62cm" viewBox="0 0 1772 900"><rect width="100%" height="100%" fill="white"/><style>text{font-family:'Noto Sans CJK KR','Noto Sans KR',sans-serif;fill:#111} .title{font-size:36px;font-weight:bold}.label{font-size:27px;font-weight:bold}.small{font-size:21px}.tiny{font-size:18px}.box{fill:#f1f1f1;stroke:#222;stroke-width:3}.nat{fill:#ddd;stroke:#222;stroke-width:3}.internet{fill:#fff;stroke:#444;stroke-width:3;stroke-dasharray:8 6}.solid{fill:none;stroke:#111;stroke-width:5;marker-end:url(#a)}.dash{fill:none;stroke:#555;stroke-width:4;stroke-dasharray:12 8;marker-end:url(#a)}</style><defs><marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#111"/></marker></defs>''']
-def t(x,y,txt,cl='small',anchor='middle'): s.append(f'<text x="{x}" y="{y}" text-anchor="{anchor}" class="{cl}">{txt}</text>')
-def rect(x,y,w,h,cl='box'): s.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" class="{cl}"/>')
-def line(x1,y1,x2,y2,cl): s.append(f'<path d="M{x1},{y1} L{x2},{y2}" class="{cl}"/>')
-for i,(x,title) in enumerate([(24,'(a) STUN 홀 펀칭'),(602,'(b) TURN 릴레이'),(1180,'(c) Tor 어니언 서비스 랑데부')]):
- rect(x,18,568,690,'internet'); t(x+284,65,title,'title')
- # devices, NATs and cloud/server
- rect(x+25,330,110,78);t(x+80,362,'A: 스마트폰','small');t(x+80,390,'기기','tiny')
- rect(x+150,310,100,120,'nat');t(x+200,355,'CGNAT','small');t(x+200,387,'NAT','tiny')
- rect(x+300,310,100,120,'nat');t(x+350,355,'가정용','small');t(x+350,387,'라우터 NAT','tiny')
- rect(x+425,330,110,78);t(x+480,362,'B: PC','small');t(x+480,390,'기기','tiny')
- # rearrange visual network order A-> nat -> internet server -> nat -> B
- if i==0:
-  rect(x+238,120,100,70);t(x+288,162,'STUN','small');line(x+80,330,x+275,190,'dash');line(x+480,330,x+300,190,'dash');line(x+110,370,x+455,370,'solid');t(x+284,475,'UDP 直連・穴開け後にメディア','tiny')
- elif i==1:
-  rect(x+238,120,100,70);t(x+288,162,'TURN','small');line(x+80,330,x+275,190,'solid');line(x+480,330,x+300,190,'solid');line(x+110,370,x+455,370,'solid');t(x+284,475,'双方が外向き接続、TURN がメディア中継','tiny')
- else:
-  rect(x+225,115,120,54);t(x+285,150,'紹介点','tiny');rect(x+225,190,120,54);t(x+285,225,'ランデブー点','tiny');line(x+80,330,x+250,160,'dash');line(x+480,330,x+320,220,'dash');line(x+110,370,x+455,370,'solid');t(x+284,475,'Tor 回路は各 3 ホップ：全通信が外向き TCP','tiny');rect(x+92,515,384,64);t(x+284,555,'NAT에 포트 개방 없음','label')
- t(x+284,637,['STUN으로 매핑 주소를 확인한 뒤 UDP 직접 연결','두 피어의 미디어를 TURN 서버가 릴레이','소개점에 게시하고 랑데부 지점에서 회선 연결'][i],'tiny')
-# legend
-line(130,780,230,780,'solid');t(244,787,'실선 = 미디어','tiny','start');line(490,780,590,780,'dash');t(605,787,'점선 = 시그널링/제어','tiny','start');line(965,780,1065,780,'solid');t(1080,787,'화살표 = 연결 시작 방향','tiny','start')
-s.append('</svg>')
-svg=''.join(s); (OUT/'fig1_traversal.svg').write_text(svg,encoding='utf-8')
-subprocess.run(['rsvg-convert','-d','300','-p','300','-o',str(OUT/'fig1_traversal.png'),str(OUT/'fig1_traversal.svg')],check=True)
+W, H = 1000, 1660
+FONT = 'Noto Sans CJK KR'
+
+
+def check_dependencies():
+    for command in ('rsvg-convert', 'fc-list'):
+        if not shutil.which(command):
+            raise SystemExit(f'Required command missing: {command}. See report/figures/README.md.')
+    families = subprocess.check_output(['fc-list', '--format', '%{family}\n'], text=True)
+    if FONT not in families:
+        raise SystemExit(f'Required font missing: {FONT}. See report/figures/README.md.')
+
+
+def generate():
+    s = [f'''<svg xmlns="http://www.w3.org/2000/svg" width="15cm" height="24.9cm" viewBox="0 0 {W} {H}">
+<rect width="100%" height="100%" fill="white"/>
+<style>text{{font-family:'{FONT}';fill:#111;font-size:21px}}.title{{font-size:27px;font-weight:bold}}.bold{{font-weight:bold}}.panel{{fill:white;stroke:#aaa;stroke-width:1.5}}.box{{fill:#f5f5f5;stroke:#333;stroke-width:2}}.nat{{fill:#e4e4e4;stroke:#333;stroke-width:2}}.media,.control{{fill:none;stroke:#222;stroke-width:3;marker-end:url(#arrow)}}.media{{marker-start:url(#arrow)}}.control{{stroke-dasharray:8 6}}</style>
+<defs><marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto-start-reverse"><path d="M0,0 L6,3 L0,6" fill="none" stroke="#222" stroke-width="1.3"/></marker></defs>''']
+
+    def text(x, y, value, cls='', anchor='middle'):
+        s.append(f'<text x="{x}" y="{y}" class="{cls}" text-anchor="{anchor}">{escape(value)}</text>')
+
+    def box(x, y, w, h, labels, cls='box'):
+        s.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" class="{cls}"/>')
+        for j, label in enumerate(labels):
+            text(x+w/2, y+29+j*28, label)
+
+    def path(d, cls='control'):
+        s.append(f'<path d="{d}" class="{cls}"/>')
+
+    def panel(y, title, height=490):
+        box(15, y, 970, height, [], 'panel')
+        text(40, y+38, title, 'title', 'start')
+
+    def peers(y):
+        # Each endpoint is visibly inside its own NAT boundary.
+        box(40, y, 190, 115, ['NAT A'], 'nat')
+        box(55, y+40, 160, 65, ['A · 사설 IP'])
+        box(770, y, 190, 115, ['NAT B'], 'nat')
+        box(785, y+40, 160, 65, ['B · 사설 IP'])
+
+    panel(15, '(a) STUN 홀 펀칭 → UDP 직접 연결')
+    box(390, 80, 220, 55, ['STUN 서버'])
+    peers(200)
+    path('M55,275 H25 V105 H380')
+    path('M420,135 V195 H240 V275 H225')
+    path('M945,275 H975 V105 H620')
+    path('M580,135 V195 H760 V275 H775')
+    text(180, 88, '① 주소 요청')
+    text(820, 88, '① 주소 요청')
+    text(300, 170, '② 공인 IP:포트 응답')
+    text(700, 170, '② 공인 IP:포트 응답')
+    path('M235,260 H760')
+    path('M765,290 H240')
+    text(500, 241, '③ 후보 주소 교환 (별도 시그널링)')
+    path('M135,315 V350 H850')
+    path('M865,315 V385 H150')
+    text(500, 335, '④ 양쪽에서 외향 UDP 전송')
+    path('M135,440 H865', 'media')
+    text(500, 422, '⑤ 홀 펀칭 성공 후 직접 미디어')
+    text(500, 480, 'STUN 서버는 주소 확인에만 사용')
+
+    panel(520, '(b) TURN 중계 · 양쪽 모두 외향 연결')
+    box(380, 600, 240, 85, ['TURN 중계 서버', '할당된 중계 주소'])
+    peers(735)
+    path('M55,810 H25 V625 H370')
+    path('M945,810 H975 V625 H630')
+    text(205, 605, '① 할당 요청 →')
+    text(805, 605, '① 연결 시작 ←')
+    path('M135,850 V900 H430 V695', 'media')
+    path('M865,850 V900 H570 V695', 'media')
+    text(500, 935, '② 미디어는 TURN 서버를 통해 양방향 전달')
+    text(500, 980, '각 단말이 NAT 안에서 외부로 연결 시작')
+
+    panel(1025, '(c) Tor 어니언 서비스 · 양쪽 모두 외향 연결', 590)
+    box(260, 1095, 200, 55, ['디렉터리'])
+    box(540, 1095, 200, 55, ['소개 지점'])
+    peers(1210)
+    path('M945,1280 H975 V1175 H360 V1160')
+    text(750, 1200, '① B: 디스크립터 게시')
+    path('M55,1280 H25 V1122 H250')
+    text(135, 1090, '② A: 조회')
+    path('M230,1280 H500 V1122 H530')
+    text(365, 1255, '③ A: 소개 요청')
+    box(270, 1345, 170, 55, ['중계 노드 2개'])
+    box(560, 1345, 170, 55, ['중계 노드 3개'])
+    box(395, 1435, 210, 55, ['랑데부 지점'])
+    path('M135,1325 V1372 H260')
+    path('M865,1325 V1372 H740')
+    path('M355,1405 V1462 H385')
+    path('M645,1405 V1462 H615')
+    path('M135,1325 V1390 H260', 'media')
+    path('M355,1405 V1480 H385', 'media')
+    path('M865,1325 V1390 H740', 'media')
+    path('M645,1405 V1480 H615', 'media')
+    text(500, 1540, '④ 두 회로가 랑데부에서 만남 · 미디어 약 6홉')
+    text(500, 1580, 'NAT에 포트 개방 없음', 'bold')
+    text(500, 1610, '외향 TCP 회로로 중계 · 홀 펀칭 사용 안 함')
+    # Legend outside the panels; arrowheads on solid lines mean media direction.
+    path('M40,1640 H100', 'media')
+    text(115, 1647, '미디어 (양방향)', anchor='start')
+    path('M420,1640 H480')
+    text(495, 1647, '설정·연결 시작 (화살표 방향)', anchor='start')
+    s.append('</svg>')
+    svg = OUT / 'fig1_traversal.svg'
+    svg.write_text('\n'.join(s)+'\n', encoding='utf-8')
+    subprocess.run(['rsvg-convert', '-d', '300', '-p', '300', '-o',
+                    str(OUT / 'fig1_traversal.png'), str(svg)], check=True)
+
+
+if __name__ == '__main__':
+    check_dependencies()
+    generate()
