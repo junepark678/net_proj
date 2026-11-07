@@ -33,4 +33,24 @@ class MetricsSummaryTest {
         assertTrue(summary.contains("\"rtt_ms\": {\"p50\": 100.0, \"p95\": 100.0}"))
         assertTrue(summary.contains("\"hops\": {\"p50\": null, \"p95\": null}"))
     }
+
+    @Test
+    fun summarySeparatesIntervalPercentilesFromCumulativeTotals() {
+        val samples = listOf(
+            CallStats(lossPct = 50.0, late = 2, plc = 3),
+            CallStats(
+                lossPct = 25.0, late = 3, plc = 5,
+                intervalLossPct = 0.0, intervalLate = 1, intervalPlc = 2,
+            ),
+        )
+        val summary = summaryJson(samples, 2.0)
+        assertTrue(summary.contains("\"late_total\": 3"))
+        assertTrue(summary.contains("\"plc_total\": 5"))
+        assertTrue(summary.contains("\"loss_pct\": {\"p50\": 0.0, \"p95\": 50.0}"))
+        assertTrue(summary.contains("\"late\": {\"p50\": 1.0, \"p95\": 2.0}"))
+        assertTrue(summary.contains("\"plc\": {\"p50\": 2.0, \"p95\": 3.0}"))
+        val empty = summaryJson(emptyList(), 0.0)
+        assertTrue(empty.contains("\"late_total\": 0"))
+        assertTrue(empty.contains("\"plc_total\": 0"))
+    }
 }

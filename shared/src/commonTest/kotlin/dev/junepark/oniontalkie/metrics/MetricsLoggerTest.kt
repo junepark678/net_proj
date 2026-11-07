@@ -1,7 +1,13 @@
 package dev.junepark.oniontalkie.metrics
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -39,7 +45,7 @@ class MetricsLoggerTest {
         assertEquals(3, logger.stats.value.hops)
         assertEquals(
             "t_s,rtt_ms,jitter_ms,loss_pct,late,plc,buffer_ms,tx_kbps,rx_kbps,circuit_id,hops\n" +
-                "1.0,,2.4609375,25.0,2,3,80.0,24.0,48.0,42,3\n",
+                "1,,2.46,25.00,2,3,80.00,24.00,48.00,42,3\n",
             sink.csv.toString(),
         )
         logger.close()
@@ -120,7 +126,8 @@ class MetricsLoggerTest {
 
     @Test
     fun idleIntervalsResetBitrateButPreserveCumulativeCounts() = runTest {
-        val logger = logger()
+        val sink = MemoryMetricsSink()
+        val logger = logger(sink)
         logger.onTransportBytes(sent = 3_000)
         logger.onPlayout(60.0, late = 1, plc = 2)
         advanceTimeBy(1_000)
@@ -133,7 +140,92 @@ class MetricsLoggerTest {
         assertEquals(1L, logger.stats.value.late)
         assertEquals(2L, logger.stats.value.plc)
         assertEquals(60.0, logger.stats.value.bufferMs)
+        assertEquals(0L, logger.stats.value.intervalLate)
+        assertEquals(0L, logger.stats.value.intervalPlc)
+        assertEquals("2,,0.00,0.00,0,0,60.00,0.00,0.00,,", sink.csv.lines()[2])
         logger.close()
+        assertTrue(sink.summary!!.contains("\"late_total\": 1"))
+        assertTrue(sink.summary!!.contains("\"plc_total\": 2"))
+    }
+
+    @Test
+    fun csvLossDescribesEachIntervalWhileStatsRetainCumulativeLoss() = runTest {
+        val sink = MemoryMetricsSink()
+        val logger = logger(sink)
+        logger.onAudioReceived(0, 0)
+        logger.onAudioReceived(2, 40)
+        advanceTimeBy(1_000)
+        runCurrent()
+        logger.onAudioReceived(3, 60)
+        logger.onAudioReceived(4, 80)
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(20.0, logger.stats.value.lossPct)
+        assertEquals(0.0, logger.stats.value.intervalLossPct)
+        assertEquals("33.33", sink.csv.lines()[1].split(',')[3])
+        assertEquals("0.00", sink.csv.lines()[2].split(',')[3])
+        logger.close()
+    }
+
+    @Test
+    fun csvUsesIntegerSecondsAndFixedDecimalsForSmallAndLargeValues() = runTest {
+        val sink = MemoryMetricsSink()
+        val logger = logger(sink)
+        logger.onPlayout(1e9)
+        logger.onAudioReceived(0, 0, arrivalMs = 0)
+        logger.onAudioReceived(1, 20, arrivalMs = 30)
+        logger.onPingSent(7, sentMs = 100)
+        logger.onPong(7, arrivalMs = 221)
+        logger.onTransportBytes(sent = 1)
+        advanceTimeBy(250)
+        logger.close()
+        assertEquals(
+            "0,121.00,0.62,0.00,0,0,1000000000.00,0.03,0.00,,",
+            sink.csv.lines()[1],
+        )
+        assertEquals("0.00", formatFixed(1e-10))
+        assertEquals("12.35", formatFixed(12.346))
+        assertEquals("100000000000000000000.00", formatFixed(1e20))
+    }
+
+    @Test
+    fun delayedSinkDoesNotBlockEventRecording() = runTest {
+        val enteredSink = CompletableDeferred<Unit>()
+        val releaseSink = CompletableDeferred<Unit>()
+        val sink = object : MetricsSink {
+            override fun appendCsv(text: String) {
+                if (text != MetricsLogger.CSV_HEADER + "\n") {
+                    enteredSink.complete(Unit)
+                    runBlocking { releaseSink.await() }
+                }
+            }
+            override fun writeSummary(json: String) = Unit
+            override fun close() = Unit
+        }
+        val logger = MetricsLogger(sink, CoroutineScope(backgroundScope.coroutineContext + Dispatchers.Default))
+        logger.onAudioReceived(0, 0, arrivalMs = 0)
+        logger.onPingSent(7, sentMs = 100)
+        try {
+            withContext(Dispatchers.Default) {
+                withTimeout(5_000) { enteredSink.await() }
+                // The sink remains blocked until all event calls have returned.
+                withTimeout(1_000) {
+                    logger.onAudioReceived(1, 20, arrivalMs = 30)
+                    logger.onPong(7, arrivalMs = 220)
+                    logger.onTransportBytes(sent = 100, received = 200)
+                    logger.onPlayout(60.0, late = 1, plc = 2)
+                }
+                assertFalse(releaseSink.isCompleted)
+            }
+        } finally {
+            releaseSink.complete(Unit)
+            logger.close()
+        }
+        assertEquals(0.625, logger.stats.value.jitterMs)
+        assertEquals(120.0, logger.stats.value.rttMs)
+        assertEquals(1L, logger.stats.value.late)
+        assertEquals(2L, logger.stats.value.plc)
+        assertTrue(logger.stats.value.txKbps > 0)
     }
 
     @Test
@@ -158,6 +250,37 @@ class MetricsLoggerTest {
         logger.close()
         assertEquals(2, sink.csv.lines().count { it.isNotEmpty() })
         assertTrue(sink.summary!!.contains("\"samples\": 1"))
+    }
+
+    @Test
+    fun closeInSameMillisecondAsTickPreservesNewEvents() = runTest {
+        val sink = MemoryMetricsSink()
+        val logger = logger(sink)
+        advanceTimeBy(1_000)
+        runCurrent()
+        logger.onTransportBytes(sent = 3, received = 6)
+        logger.onPlayout(80.0, late = 2, plc = 3)
+        logger.onAudioReceived(0, 0)
+        logger.onAudioReceived(2, 40)
+        logger.onPingSent(7, sentMs = 900)
+        logger.onPong(7)
+        logger.close()
+        assertEquals("1,100.00,2.50,33.33,2,3,80.00,24.00,48.00,,", sink.csv.lines()[2])
+        assertTrue(sink.summary!!.contains("\"samples\": 2"))
+        assertTrue(sink.summary!!.contains("\"late_total\": 2"))
+        assertTrue(sink.summary!!.contains("\"plc_total\": 3"))
+        assertFalse(sink.csv.contains("Infinity"))
+    }
+
+    @Test
+    fun immediateClosePreservesEventsBeforeFirstMillisecond() = runTest {
+        val sink = MemoryMetricsSink()
+        val logger = logger(sink)
+        logger.onPlayout(60.0, late = 1, plc = 2)
+        logger.close()
+        assertEquals("0,,0.00,0.00,1,2,60.00,0.00,0.00,,", sink.csv.lines()[1])
+        assertTrue(sink.summary!!.contains("\"late_total\": 1"))
+        assertTrue(sink.summary!!.contains("\"plc_total\": 2"))
     }
 
     @Test

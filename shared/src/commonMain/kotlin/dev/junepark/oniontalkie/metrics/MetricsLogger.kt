@@ -23,7 +23,7 @@ import kotlinx.coroutines.withContext
  * Run [scope] on an I/O dispatcher: sink writes are synchronous. Always call
  * [close] in the call's finally block, including after scope cancellation. It
  * flushes a final partial interval, writes the summary and closes the sink.
- * Sink failures propagate to the scope (sampling) or caller (events/close).
+ * Sink failures propagate to the scope (sampling) or caller (close).
  */
 class MetricsLogger(
     private val sink: MetricsSink,
@@ -31,9 +31,11 @@ class MetricsLogger(
     private val clockMs: () -> Long = monotonicClock(),
 ) {
     private val mutex = Mutex()
+    private val closeMutex = Mutex()
     private val startedMs = clockMs()
     private var lastSampleMs = startedMs
     private var closed = false
+    private var dirty = false
     private val mutableStats = MutableStateFlow(CallStats())
 
     /** Read-only, per-second snapshots for the live metrics screen. */
@@ -49,6 +51,10 @@ class MetricsLogger(
     private var highestSequence = 0L
     private val seenSequences = mutableSetOf<Long>()
     private var receivedFrames = 0L
+    private var sampledExpected = 0L
+    private var sampledReceived = 0L
+    private var sampledLate = 0L
+    private var sampledPlc = 0L
     private var txBytes = 0L
     private var rxBytes = 0L
     private var late = 0L
@@ -69,17 +75,19 @@ class MetricsLogger(
     private val sampler = scope.launch {
         while (isActive) {
             delay(1_000)
-            mutex.withLock {
-                if (!closed) sample(clockMs())
-            }
+            val snapshot = mutex.withLock { if (closed) null else sample(clockMs()) }
+            snapshot?.let { sink.appendCsv(it.toCsv() + "\n") }
         }
     }
 
-    /** Records a u16 sequence number and u32 sender timestamp in ms from AUDIO. */
-    suspend fun onAudioReceived(sequence: Int, senderTimestampMs: Long) = update {
+    /** Records AUDIO; [arrivalMs] is captured before locking, or supplied by the receiver. */
+    suspend fun onAudioReceived(
+        sequence: Int,
+        senderTimestampMs: Long,
+        arrivalMs: Long = clockMs(),
+    ) = update {
         require(sequence in 0..0xffff)
         require(senderTimestampMs in 0..UINT32_MASK)
-        val arrivalMs = clockMs()
         previousSenderMs?.let { previous ->
             val senderDelta = signedDelta(senderTimestampMs, previous, 32)
             val difference = (arrivalMs - previousArrivalMs) - senderDelta
@@ -91,18 +99,18 @@ class MetricsLogger(
         recordSequence(sequence)
     }
 
-    /** Records the exact u32 PING token and its local send time; keeps 64 probes. */
-    suspend fun onPingSent(timestampMs: Long) = update {
+    /** Records the u32 PING token and local [sentMs] before locking; keeps 64 probes. */
+    suspend fun onPingSent(timestampMs: Long, sentMs: Long = clockMs()) = update {
         require(timestampMs in 0..UINT32_MASK)
-        pendingPings[timestampMs] = clockMs()
+        pendingPings[timestampMs] = sentMs
         if (pendingPings.size > 64) pendingPings.remove(pendingPings.keys.first())
     }
 
-    /** Matches a PONG to a sent PING. Unknown and duplicate echoes are ignored. */
-    suspend fun onPong(echoedTimestampMs: Long) = update {
+    /** Matches a PONG using its pre-lock [arrivalMs]. Unknown/duplicate echoes are ignored. */
+    suspend fun onPong(echoedTimestampMs: Long, arrivalMs: Long = clockMs()) = update {
         require(echoedTimestampMs in 0..UINT32_MASK)
         pendingPings.remove(echoedTimestampMs)?.let { sentMs ->
-            rttMs = (clockMs() - sentMs).toDouble()
+            rttMs = (arrivalMs - sentMs).toDouble()
         }
     }
 
@@ -142,13 +150,22 @@ class MetricsLogger(
 
     /** Stops sampling and persists the final interval/summary. Safe to repeat. */
     suspend fun close() = withContext(NonCancellable) {
-        sampler.cancelAndJoin()
-        mutex.withLock {
-            if (!closed) {
+        closeMutex.withLock {
+            // Join any in-flight write before finalizing; event recording never
+            // acquires closeMutex or waits for the sink.
+            sampler.cancelAndJoin()
+            val finalOutput = mutex.withLock state@{
+                if (closed) return@state null
                 closed = true
+                val nowMs = clockMs()
+                val snapshot = sample(nowMs, final = true)
+                Triple(snapshot, samples.toList(), (nowMs - startedMs) / 1_000.0)
+            }
+            if (finalOutput != null) {
                 try {
-                    sample(clockMs())
-                    sink.writeSummary(summaryJson(samples, (clockMs() - startedMs) / 1_000.0))
+                    val (snapshot, snapshots, duration) = finalOutput
+                    snapshot?.let { sink.appendCsv(it.toCsv() + "\n") }
+                    sink.writeSummary(summaryJson(snapshots, duration))
                 } finally {
                     sink.close()
                 }
@@ -159,6 +176,7 @@ class MetricsLogger(
     private suspend fun update(block: () -> Unit) = mutex.withLock {
         check(!closed) { "Metrics logger is closed" }
         block()
+        dirty = true
     }
 
     private fun recordSequence(sequence: Int) {
@@ -181,10 +199,12 @@ class MetricsLogger(
         }
     }
 
-    private fun sample(nowMs: Long) {
+    private fun sample(nowMs: Long, final: Boolean = false): CallStats? {
         val intervalMs = nowMs - lastSampleMs
-        if (intervalMs <= 0) return
+        if (intervalMs <= 0 && !(final && dirty)) return null
         val expected = firstSequence?.let { highestSequence - it + 1 } ?: 0
+        val intervalExpected = expected - sampledExpected
+        val intervalLost = (intervalExpected - (receivedFrames - sampledReceived)).coerceAtLeast(0)
         val snapshot = CallStats(
             elapsedSeconds = (nowMs - startedMs) / 1_000.0,
             rttMs = rttMs,
@@ -193,21 +213,31 @@ class MetricsLogger(
             late = late,
             plc = plc,
             bufferMs = bufferMs,
-            txKbps = txBytes * 8.0 / intervalMs,
-            rxKbps = rxBytes * 8.0 / intervalMs,
+            // Sub-millisecond final events still need a row. Use the clock's
+            // 1 ms resolution as the minimum rate denominator.
+            txKbps = txBytes * 8.0 / intervalMs.coerceAtLeast(1),
+            rxKbps = rxBytes * 8.0 / intervalMs.coerceAtLeast(1),
             circuitId = circuitId,
             hops = hops,
+            intervalLossPct = if (intervalExpected == 0L) 0.0 else intervalLost * 100.0 / intervalExpected,
+            intervalLate = late - sampledLate,
+            intervalPlc = plc - sampledPlc,
         )
-        sink.appendCsv(snapshot.toCsv() + "\n")
         samples.add(snapshot)
         mutableStats.value = snapshot
         txBytes = 0
         rxBytes = 0
         lastSampleMs = nowMs
+        sampledExpected = expected
+        sampledReceived = receivedFrames
+        sampledLate = late
+        sampledPlc = plc
+        dirty = false
+        return snapshot
     }
 
     companion object {
-        /** Stable report/export schema, in architecture order. */
+        /** Stable schema: loss_pct, late, plc and bitrates cover the interval. */
         const val CSV_HEADER = "t_s,rtt_ms,jitter_ms,loss_pct,late,plc,buffer_ms,tx_kbps,rx_kbps,circuit_id,hops"
     }
 }
@@ -225,6 +255,7 @@ private fun monotonicClock(): () -> Long {
 }
 
 private fun CallStats.toCsv(): String = listOf(
-    elapsedSeconds, rttMs, jitterMs, lossPct, late, plc, bufferMs,
-    txKbps, rxKbps, circuitId, hops,
-).joinToString(",") { it?.toString() ?: "" }
+    elapsedSeconds.toLong().toString(), rttMs?.let(::formatFixed), formatFixed(jitterMs),
+    formatFixed(intervalLossPct), intervalLate.toString(), intervalPlc.toString(), formatFixed(bufferMs),
+    formatFixed(txKbps), formatFixed(rxKbps), circuitId, hops?.toString(),
+).joinToString(",") { it ?: "" }

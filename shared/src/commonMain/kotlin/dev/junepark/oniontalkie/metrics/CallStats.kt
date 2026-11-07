@@ -2,7 +2,8 @@ package dev.junepark.oniontalkie.metrics
 
 /**
  * A per-call snapshot. Times are milliseconds, rates are decimal kilobits/second.
- * Loss, late and PLC counts are cumulative; rates cover the last sample interval.
+ * Loss, late and PLC counts are cumulative; interval-prefixed fields and rates
+ * cover the last sample interval. CSV uses the interval fields.
  * A null RTT or circuit field means that measurement is unavailable.
  */
 data class CallStats(
@@ -17,4 +18,7 @@ data class CallStats(
     val rxKbps: Double = 0.0,
     val circuitId: String? = null,
     val hops: Int? = null,
+    val intervalLossPct: Double = lossPct,
+    val intervalLate: Long = late,
+    val intervalPlc: Long = plc,
 )

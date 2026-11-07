@@ -101,13 +101,29 @@ try {
 
 RTT uses matched local PING send/receive times, so peer clock offset is irrelevant.
 Jitter follows [RFC 3550 §6.4.1](https://www.rfc-editor.org/rfc/rfc3550#section-6.4.1)
-in milliseconds, including u32 timestamp wrap. Loss is the cumulative percentage
-of missing u16 sequence numbers from the first frame observed to the highest
-sequence received. Duplicates do not count as extra receptions; reordered frames
+in milliseconds, including u32 timestamp wrap. AUDIO arrival, PING send and PONG
+arrival times are captured before acquiring the event mutex; callers may supply
+those monotonic timestamps explicitly. Snapshots are taken under that mutex,
+but all sink writes happen outside it so slow storage does not block events.
+
+The CSV retains the exact 11-column header above. `t_s` is elapsed whole seconds
+(rounded down); floating-point fields use two decimal places, a decimal point,
+and no scientific notation. `loss_pct`, `late`, `plc`, `tx_kbps` and `rx_kbps`
+describe the interval since the preceding row. Interval loss is the increase in
+missing sequence numbers divided by the increase in expected sequence numbers,
+clamped to zero when gap repairs exceed new losses; no new expected frames means
+zero interval loss. `late` and `plc` are interval event counts. RTT, jitter, buffer
+delay and circuit fields are the current measurements at the sample boundary.
+
+Live `CallStats.lossPct` is the cumulative percentage of missing u16 sequence
+numbers from the first frame observed to the highest sequence received;
+`CallStats.late` and `plc` are also cumulative. Its `intervalLossPct`,
+`intervalLate` and `intervalPlc` fields provide the CSV interval values.
+Duplicates do not count as extra receptions; reordered frames
 within the last 32,768 sequence numbers can repair gaps. Sequence jumps of half
 the sequence space or more are ambiguous; a sender restart requires a new logger.
-Late and PLC counts are cumulative jitter-buffer events, separate from network
-sequence loss. Bitrates are decimal kilobits per second over the actual sampling
+Late and PLC are jitter-buffer events, separate from network sequence loss.
+Bitrates are decimal kilobits per second over the actual sampling
 interval, excluding Tor relay overhead. `hops` counts the path entries in the
 selected BUILT circuit's [GETINFO circuit-status](https://spec.torproject.org/control-spec/commands.html)
 reply, never an arbitrary unrelated circuit. Unavailable RTT/circuit fields are
@@ -122,12 +138,18 @@ the same peer; existing call paths are rejected rather than truncated.
 
 Hangup must call `close()`, even after cancellation of the sampling scope. It
 flushes any partial second using its actual duration, writes the summary, and
-closes the file. Exact-second hangups do not duplicate the last row. The summary
-contains `samples`, `duration_s` and `{p50,p95}` objects for every numeric metric
+closes the file. A hangup at the last tick's timestamp emits another row only if
+events were accepted after that tick, preserving their metrics. The same rule
+preserves events on an immediate hangup before the first millisecond. Such rows
+use a minimum 1 ms bitrate denominator, and can share an integer `t_s` with the
+preceding row; ordinary partial rows use their actual duration. The summary
+contains `samples`, `duration_s`, cumulative `late_total` and `plc_total`, and
+`{p50,p95}` objects for every numeric CSV metric
 except elapsed time. Percentiles use **nearest rank** over CSV snapshots
 (`sorted[ceil(p * n) - 1]`); unavailable measurements are omitted and empty
 percentiles are JSON `null`. Each row, including a final partial row, has equal
-weight. Summaries describe sampled values, not all individual packet RTTs.
+weight. Summaries describe sampled values, not all individual packet RTTs. Loss,
+late and PLC percentiles use interval values, matching the CSV.
 
 The `tools/` scripts can aggregate these files into the tables and figures used
 in the report's comparison section (Tor relay traversal vs. STUN hole punching

@@ -30,7 +30,7 @@ class FileMetricsSinkTest {
             runCurrent()
             val csv = read(first.csvPath)
             assertEquals(MetricsLogger.CSV_HEADER, csv.lineSequence().first())
-            assertEquals("1.0,,0.0,0.0,0,0,0.0,24.0,12.0,,", csv.lineSequence().drop(1).first())
+            assertEquals("1,,0.00,0.00,0,0,0.00,24.00,12.00,,", csv.lineSequence().drop(1).first())
             logger.close()
             val summary = read(first.summaryPath)
             assertEquals("summary.json", first.summaryPath.name)
