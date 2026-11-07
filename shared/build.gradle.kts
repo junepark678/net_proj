@@ -15,6 +15,7 @@ kotlin {
         withHostTestBuilder {}
     }
     jvm("desktop")
+    applyDefaultHierarchyTemplate()
 
     applyDefaultHierarchyTemplate()
 
