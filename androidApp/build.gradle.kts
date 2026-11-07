@@ -13,6 +13,7 @@ android {
         applicationId = "dev.junepark.oniontalkie"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 1
         versionName = "0.1.0"
     }
@@ -34,4 +35,8 @@ kotlin {
 dependencies {
     implementation(project(":ui"))
     implementation(libs.androidx.activity.compose)
+    androidTestImplementation(project(":shared"))
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.androidx.test.rules)
 }
