@@ -17,7 +17,7 @@ compose.desktop {
     application {
         mainClass = "dev.junepark.oniontalkie.desktop.MainKt"
         nativeDistributions {
-            packageName = "OnionTalkie"
+            packageName = "Onion Dial"
             packageVersion = "0.1.0"
         }
     }

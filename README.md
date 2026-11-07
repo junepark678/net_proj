@@ -1,4 +1,4 @@
-# net_proj — Onion Talkie
+# Onion Dial
 
 A serverless, push-free, walkie-talkie-style VoIP app (Android + desktop) that
 carries Opus 24 kbps mono audio over Tor onion services. It is the practical
@@ -108,8 +108,9 @@ distributable without opening a window:
 ./gradlew --no-daemon build :shared:allTests :androidApp:assembleDebug :desktopApp:createDistributable
 ```
 
-The desktop application and bundled runtime are written to
-`desktopApp/build/compose/binaries/main/app/OnionTalkie/`. Builds enable
+The Android application ID is `dev.pythonplayer123.onion_dialer`. Kotlin source packages remain
+`dev.junepark.oniontalkie` until the later migration in issue #55. The desktop application and bundled runtime are written to
+`desktopApp/build/compose/binaries/main/app/Onion Dial/`. Builds enable
 configuration cache and parallel execution; rerunning a command reuses the
 configuration cache. Build configuration performs no downloads or SDK setup
 outside normal Gradle dependency resolution.

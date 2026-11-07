@@ -13,7 +13,7 @@ figures 5, citations 5, length and format 5.
    of traversal: hole punching (STUN RFC 8489 / ICE), relays (TURN RFC 8656),
    and rendezvous via Tor onion services (both ends outbound). Figure 1: the
    three topologies side by side.
-3. 심화 (depth): the Onion Talkie app. Design (no server, opt-in presence, no
+3. 심화 (depth): the Onion Dial app. Design (no server, opt-in presence, no
    push), Opus 24 kbps over a TCP stream through Tor. Measurement table:
    same-LAN direct vs. Tor-to-Tor (RTT, jitter, loss, MOS estimate), plus
    bandwidth per call. When it makes sense (no infrastructure, privacy,

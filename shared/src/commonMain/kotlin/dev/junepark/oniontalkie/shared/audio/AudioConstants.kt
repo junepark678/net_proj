@@ -1,6 +1,6 @@
 package dev.junepark.oniontalkie.shared.audio
 
-/** Shared audio format and Opus settings used by every Onion Talkie call. */
+/** Shared audio format and Opus settings used by every Onion Dial call. */
 object AudioConstants {
     const val SAMPLE_RATE = 48_000
     const val CHANNELS = 1

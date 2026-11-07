@@ -5,7 +5,7 @@ import androidx.compose.ui.window.application
 import dev.junepark.oniontalkie.ui.App
 
 fun main() = application {
-    Window(onCloseRequest = ::exitApplication, title = "Onion Talkie") {
+    Window(onCloseRequest = ::exitApplication, title = "Onion Dial") {
         App()
     }
 }

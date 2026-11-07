@@ -10,7 +10,7 @@ android {
     buildToolsVersion = libs.versions.android.buildTools.get()
 
     defaultConfig {
-        applicationId = "dev.junepark.oniontalkie"
+        applicationId = "dev.pythonplayer123.onion_dialer"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1

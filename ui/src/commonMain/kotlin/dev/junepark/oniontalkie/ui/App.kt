@@ -22,7 +22,7 @@ fun App() {
         contentAlignment = Alignment.Center,
     ) {
         BasicText(
-            text = "Onion Talkie\nScaffold ready on ${platformName()}",
+            text = "Onion Dial\nScaffold ready on ${platformName()}",
             style = TextStyle(color = Color.White, fontSize = 24.sp, textAlign = TextAlign.Center),
         )
     }
