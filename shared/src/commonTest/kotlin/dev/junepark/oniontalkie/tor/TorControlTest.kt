@@ -157,6 +157,15 @@ class TorControlTest {
         control.close()
     }
 
+    @Test fun streamEventsCanBeEnabledForDiagnostics() = runTest {
+        val transport = TranscriptTransport()
+        val control = TorControl(transport, backgroundScope)
+        val enable = async { control.setEvents(TorEventType.STATUS_CLIENT, TorEventType.CIRC, TorEventType.HS_DESC, TorEventType.STREAM) }
+        transport.expect("SETEVENTS STATUS_CLIENT CIRC HS_DESC STREAM", "250 OK")
+        enable.await()
+        control.close()
+    }
+
     @Test fun badCookieAndAuthenticationRequiredAreMapped() = runTest {
         for (code in listOf(514, 515)) {
             val transport = TranscriptTransport()

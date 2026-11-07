@@ -10,6 +10,7 @@ import dev.junepark.oniontalkie.tor.JvmControlTransport
 import dev.junepark.oniontalkie.tor.TorConfig
 import dev.junepark.oniontalkie.tor.TorControl
 import dev.junepark.oniontalkie.tor.TorEvent
+import dev.junepark.oniontalkie.tor.TorEventType
 import dev.junepark.oniontalkie.tor.TorProcess
 import java.io.File
 import java.nio.file.Files
@@ -80,6 +81,11 @@ internal suspend fun runTorRealSimulation(
                 logTorEvent("B", event)
                 if (event is TorEvent.HiddenServiceDescriptor) descriptorsB.send(event)
             }
+        }
+        // STREAM events expose Tor's own result for each SOCKS connection, making a failed
+        // qualification distinguish a relay/rendezvous failure from an app handshake timeout.
+        listOf(torA.control, torB.control).forEach { control ->
+            control.setEvents(TorEventType.STATUS_CLIENT, TorEventType.CIRC, TorEventType.HS_DESC, TorEventType.STREAM)
         }
 
         val callRuntimeA = JvmOnionCallRuntime.open(
@@ -282,14 +288,32 @@ internal suspend fun runTorPeerSimulation(
 }
 
 private fun logTorEvent(client: String, event: TorEvent) {
-    if (event is TorEvent.HiddenServiceDescriptor &&
-        event.action in setOf("CREATED", "REQUESTED", "FAILED", "RECEIVED")
-    ) {
-        println(
-            "Tor $client HS_DESC action=${event.action} auth=${event.authType} " +
-                "reason=${event.fields["REASON"] ?: "none"}",
-        )
+    when (event) {
+        is TorEvent.HiddenServiceDescriptor -> if (
+            event.action in setOf("CREATED", "REQUESTED", "FAILED", "RECEIVED")
+        ) {
+            println(
+                "Tor $client HS_DESC action=${event.action} auth=${event.authType} " +
+                    "reason=${event.fields["REASON"] ?: "none"}",
+            )
+        }
+        is TorEvent.Unknown -> logTorStreamEvent(client, event)
+        else -> Unit
     }
+}
+
+private fun logTorStreamEvent(client: String, event: TorEvent.Unknown) {
+    val tokens = event.raw.lines.firstOrNull()?.text?.split(' ') ?: return
+    if (tokens.firstOrNull() != "STREAM" || tokens.size < 5) return
+    val fields = tokens.drop(5).mapNotNull { token ->
+        val separator = token.indexOf('=')
+        if (separator <= 0) null else token.substring(0, separator) to token.substring(separator + 1)
+    }.toMap()
+    println(
+        "Tor $client STREAM id=${tokens[1]} status=${tokens[2]} circuit=${tokens[3]} " +
+            "purpose=${fields["PURPOSE"] ?: "none"} reason=${fields["REASON"] ?: "none"} " +
+            "remoteReason=${fields["REMOTE_REASON"] ?: "none"}",
+    )
 }
 
 private suspend fun awaitPeerDescriptor(

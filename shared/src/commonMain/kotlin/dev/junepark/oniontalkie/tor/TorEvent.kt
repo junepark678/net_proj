@@ -1,7 +1,7 @@
 package dev.junepark.oniontalkie.tor
 
 /** Subscriptions supported by this client. SETEVENTS replaces the previous subscription. */
-enum class TorEventType { STATUS_CLIENT, CIRC, HS_DESC }
+enum class TorEventType { STATUS_CLIENT, CIRC, HS_DESC, STREAM }
 
 /** Parsed event fields plus the complete reply for extensions and metrics. Statuses remain
  * strings so future Tor versions can add values without breaking the event reader. */
