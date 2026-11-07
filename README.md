@@ -52,6 +52,12 @@ before merge; the scores are recorded in the PR description.
 ./gradlew :androidApp:assembleDebug # Android APK
 ```
 
+Prerequisites: JDK 21 and the Android SDK (`platform-tools`, `platforms;android-37.0`,
+`build-tools;36.0.0`; `compileSdk` 37 because AndroidX Compose 1.12 requires it, `targetSdk` 35,
+`minSdk` 26). Point Gradle at the SDK with `ANDROID_HOME` or a git-ignored `local.properties`
+containing `sdk.dir=/path/to/Android/Sdk`. Dependency and plugin versions live in
+`gradle/libs.versions.toml`; the Gradle wrapper is committed.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
