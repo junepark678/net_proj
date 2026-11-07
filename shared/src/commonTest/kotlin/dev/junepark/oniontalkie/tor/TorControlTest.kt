@@ -35,6 +35,18 @@ internal class TranscriptTransport : ControlTransport {
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TorControlTest {
+    // Independently computed with Python hmac/hashlib; shared with candidate PR #48.
+    private val serverHash = "7780ba467c566548b61da5b927043df643cc6fb18e6258718f47591a09909213"
+    private val clientHash = "ecd5845c1ed9b11354fed620d989e9f34243606e0f7f97c0f3c8a9303a06d468"
+    private val clientNonce = "aa".repeat(32)
+    private val serverNonce = "bb".repeat(32)
+
+    private suspend fun TranscriptTransport.advertiseMethods(methods: String = "COOKIE") {
+        expect("PROTOCOLINFO 1", "250-PROTOCOLINFO 1",
+            "250-AUTH METHODS=$methods COOKIEFILE=\"/ignored/control cookie\"",
+            "250-VERSION Tor=\"0.4.9.12\"", "250 OK")
+    }
+
     @Test fun cookieAuthSubscribesAndTracksBootstrapEvents() = runTest {
         val transport = TranscriptTransport()
         val control = TorControl(transport, backgroundScope)
@@ -43,6 +55,7 @@ class TorControlTest {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { control.bootstrap.collect { phases += it } }
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { control.events.collect { events += it } }
         val auth = async { control.authenticate(ByteArray(32) { it.toByte() }) }
+        transport.advertiseMethods()
         transport.expect("AUTHENTICATE 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "250 OK")
         transport.expect("SETEVENTS STATUS_CLIENT CIRC HS_DESC", "250 OK")
         transport.expect("GETINFO status/bootstrap-phase", "250-status/bootstrap-phase=NOTICE BOOTSTRAP PROGRESS=5 TAG=conn SUMMARY=\"Connecting to a relay\"", "250 OK")
@@ -63,6 +76,7 @@ class TorControlTest {
         val transport = TranscriptTransport()
         val control = TorControl(transport, backgroundScope)
         val auth = async { control.authenticate(ByteArray(32) { 0xff.toByte() }) }
+        transport.advertiseMethods("HASHEDPASSWORD,COOKIE")
         transport.expect("AUTHENTICATE " + "ff".repeat(32), "250 OK")
         transport.expect("SETEVENTS STATUS_CLIENT CIRC HS_DESC", "250 OK")
         transport.expect("GETINFO status/bootstrap-phase", "250-status/bootstrap-phase=NOTICE BOOTSTRAP PROGRESS=100 TAG=done SUMMARY=\"Done\"", "250 OK")
@@ -148,12 +162,100 @@ class TorControlTest {
             val transport = TranscriptTransport()
             val control = TorControl(transport, backgroundScope)
             val error = async { assertFailsWith<TorCommandException> { control.authenticate(ByteArray(32)) } }
+            transport.advertiseMethods()
             transport.expect("AUTHENTICATE " + "00".repeat(32), "$code Authentication failed")
             assertTrue(error.await().isAuthenticationFailure)
             assertEquals(code, error.await().reply.code)
             assertTrue(transport.output.tryReceive().isFailure)
             control.close()
         }
+    }
+
+    @Test fun safeCookieIsPreferredAndUsesKnownAnswerProofs() = runTest {
+        val transport = TranscriptTransport()
+        val control = TorControl(transport, backgroundScope) { ByteArray(32) { 0xaa.toByte() } }
+        val auth = async { control.authenticate(ByteArray(32) { it.toByte() }) }
+        transport.advertiseMethods("COOKIE,SAFECOOKIE,HASHEDPASSWORD")
+        transport.expect("AUTHCHALLENGE SAFECOOKIE $clientNonce",
+            "250 AUTHCHALLENGE SERVERHASH=${serverHash.uppercase()} SERVERNONCE=${serverNonce.uppercase()}")
+        transport.expect("AUTHENTICATE $clientHash", "250 OK")
+        transport.expect("SETEVENTS STATUS_CLIENT CIRC HS_DESC", "250 OK")
+        transport.expect("GETINFO status/bootstrap-phase",
+            "250-status/bootstrap-phase=NOTICE BOOTSTRAP PROGRESS=100 TAG=done SUMMARY=\"Done\"", "250 OK")
+        auth.await()
+        assertEquals(100, control.bootstrap.value)
+        assertFalse(transport.closed)
+        control.close()
+    }
+
+    @Test fun invalidSafeCookieChallengeClosesWithoutSendingCredentialsOrDowngrading() = runTest {
+        val challenges = listOf(
+            "250 AUTHCHALLENGE SERVERHASH=${"00".repeat(32)} SERVERNONCE=$serverNonce",
+            "250 AUTHCHALLENGE SERVERHASH=$serverHash",
+            "250 AUTHCHALLENGE SERVERNONCE=$serverNonce",
+            "250 AUTHCHALLENGE SERVERHASH=${"aa".repeat(31)} SERVERNONCE=$serverNonce",
+            "250 AUTHCHALLENGE SERVERHASH=${"aa".repeat(33)} SERVERNONCE=$serverNonce",
+            "250 AUTHCHALLENGE SERVERHASH=$serverHash SERVERNONCE=${"bb".repeat(31)}",
+            "250 AUTHCHALLENGE SERVERHASH=$serverHash SERVERNONCE=${"bb".repeat(33)}",
+            "250 AUTHCHALLENGE SERVERHASH=${"zz".repeat(32)} SERVERNONCE=$serverNonce",
+            "250 AUTHCHALLENGE SERVERHASH=$serverHash SERVERNONCE=${"zz".repeat(32)}",
+            "250 AUTHCHALLENGE SERVERHASH=$serverHash SERVERNONCE=$serverNonce SERVERHASH=$serverHash",
+            "250 OK",
+        )
+        for (challenge in challenges) {
+            val transport = TranscriptTransport()
+            val control = TorControl(transport, backgroundScope) { ByteArray(32) { 0xaa.toByte() } }
+            val error = async { assertFailsWith<TorProtocolException> { control.authenticate(ByteArray(32) { it.toByte() }) } }
+            transport.advertiseMethods("COOKIE,SAFECOOKIE")
+            transport.expect("AUTHCHALLENGE SAFECOOKIE $clientNonce", challenge)
+            error.await()
+            assertTrue(transport.closed)
+            assertTrue(transport.output.tryReceive().isFailure)
+        }
+    }
+
+    @Test fun rejectedSafeCookieChallengeDoesNotFallBackToCookie() = runTest {
+        val transport = TranscriptTransport()
+        val control = TorControl(transport, backgroundScope) { ByteArray(32) { 0xaa.toByte() } }
+        val error = async { assertFailsWith<TorCommandException> { control.authenticate(ByteArray(32)) } }
+        transport.advertiseMethods("COOKIE,SAFECOOKIE")
+        transport.expect("AUTHCHALLENGE SAFECOOKIE $clientNonce", "515 Challenge rejected")
+        assertEquals(515, error.await().reply.code)
+        assertTrue(transport.closed)
+        assertTrue(transport.output.tryReceive().isFailure)
+    }
+
+    @Test fun malformedOrUnsupportedProtocolInfoNeverSendsTheCookie() = runTest {
+        for (line in listOf("250 OK", "250 AUTH METHODS=NULL,HASHEDPASSWORD",
+            "250 AUTH COOKIEFILE=\"/ignored\"", "250 AUTH METHODS=\"COOKIE",
+            "250 AUTH METHODS=COOKIE METHODS=SAFECOOKIE")) {
+            val transport = TranscriptTransport()
+            val control = TorControl(transport, backgroundScope)
+            val error = async { assertFailsWith<TorProtocolException> { control.authenticate(ByteArray(32)) } }
+            transport.expect("PROTOCOLINFO 1", line)
+            error.await()
+            assertTrue(transport.closed)
+            assertTrue(transport.output.tryReceive().isFailure)
+        }
+    }
+
+    @Test fun rawCommandsWaitUntilTheSafeCookieHandshakeFinishes() = runTest {
+        val transport = TranscriptTransport()
+        val control = TorControl(transport, backgroundScope) { ByteArray(32) { 0xaa.toByte() } }
+        val auth = async { control.authenticate(ByteArray(32) { it.toByte() }) }
+        transport.advertiseMethods("SAFECOOKIE")
+        assertEquals("AUTHCHALLENGE SAFECOOKIE $clientNonce", transport.output.receive())
+        val queued = async { control.command("GETINFO version") }
+        runCurrent()
+        assertTrue(transport.output.tryReceive().isFailure)
+        transport.feed("250 AUTHCHALLENGE SERVERHASH=$serverHash SERVERNONCE=$serverNonce")
+        transport.expect("AUTHENTICATE $clientHash", "250 OK")
+        transport.expect("GETINFO version", "250 version=test-tor")
+        assertEquals(250, queued.await().code)
+        transport.expect("SETEVENTS STATUS_CLIENT CIRC HS_DESC", "250 OK")
+        transport.expect("GETINFO status/bootstrap-phase", "250 status/bootstrap-phase=NOTICE BOOTSTRAP PROGRESS=0")
+        auth.await()
+        control.close()
     }
 
     @Test fun multilineGetInfoUnstuffsDataAndIgnoresStatusLookingPayload() = runTest {
@@ -243,7 +345,11 @@ class TorControlTest {
             assertFailsWith<IllegalArgumentException> { control.getInfo(key) }
         }
         assertFailsWith<IllegalArgumentException> { control.authenticate(ByteArray(31)) }
+        for (line in listOf("", " ", "\t", "GETINFO version\r", "GETINFO version\n", "GETINFO version\r\nSIGNAL SHUTDOWN")) {
+            assertFailsWith<IllegalArgumentException> { control.command(line) }
+        }
         assertTrue(transport.output.tryReceive().isFailure)
+        assertFalse(transport.closed)
         control.close()
     }
 }

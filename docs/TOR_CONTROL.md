@@ -20,10 +20,21 @@ try {
 }
 ```
 
-Authentication uses COOKIE hex authentication. It does not negotiate SAFECOOKIE
-or implement password authentication. COOKIE sends the cookie without verifying
-the server; use a trusted local endpoint. The process manager owns reading and
-protecting the cookie file. No cookie is logged or retained by the client.
+Call `authenticate` once on a fresh connection, before issuing other commands.
+It sends `PROTOCOLINFO 1` and prefers SAFECOOKIE whenever advertised, even when
+COOKIE is also available. SAFECOOKIE sends `AUTHCHALLENGE` with a fresh secure
+32-byte client nonce, checks the server's HMAC-SHA256 proof in constant time,
+then sends the controller's HMAC-SHA256 proof with `AUTHENTICATE`. Hashes and
+server nonces must each contain exactly 32 hexadecimal bytes. The handshake
+holds the command mutex so concurrent commands cannot interrupt it.
+
+If only COOKIE is supported, authentication sends the cookie as hex. COOKIE
+does not verify the server; use a trusted local endpoint. Unsupported methods,
+malformed challenges, and failed server proofs close the connection. A failed
+SAFECOOKIE attempt never falls back to COOKIE. Password and unauthenticated
+login are unsupported. The process manager owns reading and protecting the
+cookie file; the client does not read the server-advertised path. No cookie is
+logged or retained by the client.
 
 Successful authentication subscribes to `STATUS_CLIENT`, `CIRC`, and `HS_DESC`
 and queries `status/bootstrap-phase` to initialize clients joining a running
@@ -40,6 +51,27 @@ space, `-` continuation and `+` data lines, dot unescaping, 250/251 success,
 and negative replies. `getInfo` normalizes data blocks to LF without a final
 line terminator. `TorCommandException` preserves the status and every reply
 line; 514/515 are identifiable through `isAuthenticationFailure`.
+
+`suspend fun command(line: String): TorReply` is the extension point for higher
+level components such as the onion-service publisher in #7. Pass one command
+without its line terminator. Empty or whitespace-only strings and any embedded
+CR or LF throw `IllegalArgumentException` before writing or closing the
+connection. The transport appends CRLF. Callers own command-specific argument
+validation and quoting; the client does not log command text or replies.
+
+The returned `TorReply.code` preserves the 2xx status (including 251), and
+`TorReply.lines` preserves every continuation line and the final status line.
+Each `TorReplyLine` contains `text` and an optional dot-unescaped `data` block.
+For a non-2xx reply, `TorCommandException.reply` preserves the same complete
+structure. For example, a publisher can issue a formatted `ADD_ONION` command
+and extract `ServiceID=` and `PrivateKey=` lines without changing this client:
+
+```kotlin
+val reply = control.command(formattedAddOnionCommand)
+val serviceId = reply.lines.first { it.text.startsWith("ServiceID=") }
+    .text.substringAfter('=')
+```
+
 Malformed replies, transport failures, EOF, and explicit close fail pending
 commands. A negative reply alone leaves the session usable if Tor keeps the
 connection open. Tor normally closes it after an authentication failure.
@@ -59,18 +91,20 @@ Protocol references: [message framing](https://spec.torproject.org/control-spec/
 
 ## Verification
 
-No Tor or network access is needed for the transcript tests and loopback TCP
-tests:
+No Tor or network access is needed for the transcript tests, SHA-256 and
+RFC 4231 HMAC-SHA256 known-answer vectors, SAFECOOKIE handshake vectors, and
+loopback TCP tests (including the raw command API and multi-line replies):
 
 ```sh
-ANDROID_HOME=/home/june/Android/Sdk ./gradlew :shared:testAndroidHostTest :shared:desktopTest
+ANDROID_HOME=/home/june/Android/Sdk ./gradlew --no-daemon :shared:testAndroidHostTest :shared:desktopTest
 ```
 
 The desktop smoke test is skipped unless `TOR_CONTROL_SMOKE_BINARY` points at
 a Tor executable. It starts an isolated Tor with a temporary data directory,
 cookie authentication, an automatic control port and no SOCKS listener. It
-checks actual cookie authentication, intermediate bootstrap progress and 100%,
-GETINFO (including a 552 response), SETEVENTS, NEWNYM and SHUTDOWN. It waits up
+checks negotiated cookie authentication (SAFECOOKIE on current Tor), intermediate
+bootstrap progress and 100%, GETINFO (including a 552 response), SETEVENTS,
+NEWNYM and SHUTDOWN. It waits up
 to 180 seconds for bootstrap and requires access to the public Tor network.
 Logs remain in the printed temporary directory on failure. It does not
 publish an onion service or use the user's running Tor instance.

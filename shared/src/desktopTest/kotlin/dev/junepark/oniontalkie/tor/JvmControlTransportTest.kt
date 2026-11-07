@@ -14,6 +14,45 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withTimeout
 
 class JvmControlTransportTest {
+    @Test fun rawCommandsValidateBeforeWritingAndPreserveCompleteReplies() = runBlocking {
+        withTimeout(5_000) {
+            ServerSocket(0).use { server ->
+                val addOnion = "ADD_ONION NEW:ED25519-V3 Port=9999,127.0.0.1:9999 ClientAuthV3=peer-key"
+                val peer = async(Dispatchers.IO) {
+                    server.accept().use { socket ->
+                        socket.soTimeout = 2_000
+                        val reader = socket.getInputStream().bufferedReader()
+                        val writer = socket.getOutputStream().bufferedWriter()
+                        assertEquals(addOnion, reader.readLine())
+                        writer.write("250-ServiceID=test-service\r\n250-PrivateKey=ED25519-V3:test-key\r\n250 OK\r\n")
+                        writer.flush()
+                        assertEquals("DEL_ONION missing", reader.readLine())
+                        writer.write("552-Unknown service\r\n552 missing\r\n")
+                        writer.flush()
+                        assertEquals("GETINFO test/data", reader.readLine())
+                        writer.write("251+test/data=\r\nfirst\r\n..dot\r\n.\r\n251 OK\r\n")
+                        writer.flush()
+                    }
+                }
+                val control = TorControl(JvmControlTransport.connect(port = server.localPort), this)
+                try {
+                    for (line in listOf("", " \t ", "GETINFO version\r", "GETINFO version\n", "GETINFO version\r\nSIGNAL SHUTDOWN")) {
+                        assertFailsWith<IllegalArgumentException> { control.command(line) }
+                    }
+                    assertEquals(TorReply(250, listOf(
+                        TorReplyLine("ServiceID=test-service"), TorReplyLine("PrivateKey=ED25519-V3:test-key"), TorReplyLine("OK"),
+                    )), control.command(addOnion))
+                    val error = assertFailsWith<TorCommandException> { control.command("DEL_ONION missing") }
+                    assertEquals(TorReply(552, listOf(TorReplyLine("Unknown service"), TorReplyLine("missing"))), error.reply)
+                    assertEquals(TorReply(251, listOf(
+                        TorReplyLine("test/data=", listOf("first", ".dot")), TorReplyLine("OK"),
+                    )), control.command("GETINFO test/data"))
+                } finally { control.close() }
+                peer.await()
+            }
+        }
+    }
+
     @Test fun sendsCrLfAndReadsDataRepliesOverTcp() = runBlocking {
         withTimeout(5_000) {
             ServerSocket(0).use { server ->

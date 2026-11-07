@@ -24,7 +24,13 @@ enum class TorSignal { NEWNYM, SHUTDOWN }
  * are serialized; cancelling an in-flight command closes the connection to preserve framing.
  * Callers can apply withTimeout to commands. No password or unauthenticated login is supported.
  */
-class TorControl(private val transport: ControlTransport, scope: CoroutineScope) {
+class TorControl internal constructor(
+    private val transport: ControlTransport,
+    scope: CoroutineScope,
+    private val clientNonce: () -> ByteArray,
+) {
+    constructor(transport: ControlTransport, scope: CoroutineScope) : this(transport, scope, ::secureControlNonce)
+
     private val lifetime = SupervisorJob(scope.coroutineContext[kotlinx.coroutines.Job])
     private val replies = Channel<TorReply>(1)
     private val commandMutex = Mutex()
@@ -71,21 +77,42 @@ class TorControl(private val transport: ControlTransport, scope: CoroutineScope)
         }
     }
 
-    /** Authenticates with the 32 bytes read from Tor's cookie file (not its pathname).
+    /** Negotiates SAFECOOKIE (preferred) or COOKIE using the 32 cookie bytes, not a pathname.
      * Subscribes to STATUS_CLIENT, CIRC and HS_DESC, then reads the current bootstrap phase
-     * so connecting to an already bootstrapped Tor also reports 100. Use only a trusted local
-     * control endpoint: COOKIE authentication sends the cookie without server verification.
+     * so connecting to an already bootstrapped Tor also reports 100. Call once on a fresh
+     * connection before issuing other commands. COOKIE requires a trusted local endpoint.
+     * A failed or malformed SAFECOOKIE challenge closes the connection without downgrading.
      */
     suspend fun authenticate(cookie: ByteArray) {
         require(cookie.size == 32) { "Tor authentication cookies must contain exactly 32 bytes" }
-        val hex = "0123456789abcdef"
-        val encoded = buildString(64) {
-            for (byte in cookie) {
-                val value = byte.toInt() and 0xff
-                append(hex[value ushr 4]); append(hex[value and 15])
+        commandMutex.withLock {
+            try {
+                val auth = authFields(exchange("PROTOCOLINFO 1"), "AUTH")
+                val methods = auth["METHODS"]?.split(',').orEmpty()
+                when {
+                    "SAFECOOKIE" in methods -> {
+                        val nonce = clientNonce()
+                        check(nonce.size == 32) { "SAFECOOKIE client nonce must contain exactly 32 bytes" }
+                        val challenge = authFields(exchange("AUTHCHALLENGE SAFECOOKIE ${nonce.toHex()}"), "AUTHCHALLENGE")
+                        val serverHash = challenge.hexField("SERVERHASH")
+                        val serverNonce = challenge.hexField("SERVERNONCE")
+                        val message = cookie + nonce + serverNonce
+                        val expected = hmacSha256(SERVER_KEY, message)
+                        var difference = 0
+                        for (i in expected.indices) {
+                            difference = difference or (expected[i].toInt() xor serverHash[i].toInt())
+                        }
+                        if (difference != 0) throw TorProtocolException("SAFECOOKIE server proof did not verify")
+                        exchange("AUTHENTICATE ${hmacSha256(CLIENT_KEY, message).toHex()}")
+                    }
+                    "COOKIE" in methods -> exchange("AUTHENTICATE ${cookie.toHex()}")
+                    else -> throw TorProtocolException("Tor did not advertise a supported cookie authentication method")
+                }
+            } catch (failure: Throwable) {
+                terminate(failure)
+                throw failure
             }
         }
-        command("AUTHENTICATE $encoded")
         setEvents(TorEventType.STATUS_CLIENT, TorEventType.CIRC, TorEventType.HS_DESC)
         getInfo("status/bootstrap-phase")
     }
@@ -114,7 +141,21 @@ class TorControl(private val transport: ControlTransport, scope: CoroutineScope)
     /** Closes this client and fails pending commands. Does not send SHUTDOWN to Tor. */
     fun close() { terminate(TorConnectionClosedException("Tor control client was closed")) }
 
-    private suspend fun command(line: String): TorReply = commandMutex.withLock {
+    /** Sends one nonblank command line without CR/LF; the transport appends CRLF.
+     * Returns the complete 2xx [TorReply], including its status and all continuation/data lines.
+     * Negative replies throw [TorCommandException] with the complete reply and leave the
+     * connection usable if Tor keeps it open. No command text or reply is logged.
+     * Callers own command-specific formatting, including quoting and argument validation.
+     */
+    suspend fun command(line: String): TorReply {
+        require(line.isNotBlank() && '\r' !in line && '\n' !in line) {
+            "A control command must be a nonblank single line without CR or LF"
+        }
+        return commandMutex.withLock { exchange(line) }
+    }
+
+    // Caller holds commandMutex, including across the entire authentication handshake.
+    private suspend fun exchange(line: String): TorReply {
         val reply = try {
             // Check terminal state before sending another command after EOF or cancellation.
             replies.tryReceive().let { result ->
@@ -129,7 +170,7 @@ class TorControl(private val transport: ControlTransport, scope: CoroutineScope)
             throw failure
         }
         if (reply.code !in 200..299) throw TorCommandException(reply)
-        reply
+        return reply
     }
 
     private fun onEvent(reply: TorReply) {
@@ -145,4 +186,32 @@ class TorControl(private val transport: ControlTransport, scope: CoroutineScope)
         runCatching { transport.close() }
         lifetime.cancel()
     }
+
+    private companion object {
+        val SERVER_KEY = "Tor safe cookie authentication server-to-controller hash".encodeToByteArray()
+        val CLIENT_KEY = "Tor safe cookie authentication controller-to-server hash".encodeToByteArray()
+    }
+}
+
+private fun authFields(reply: TorReply, prefix: String): Map<String, String> {
+    val line = reply.lines.singleOrNull { it.text.startsWith("$prefix ") && it.data == null }
+        ?: throw TorProtocolException("Authentication reply omitted a unique $prefix line")
+    val tokens = controlTokens(line.text)?.drop(1)
+        ?: throw TorProtocolException("Malformed $prefix authentication reply")
+    val fields = mutableMapOf<String, String>()
+    for (token in tokens) {
+        val key = token.substringBefore('=')
+        if ('=' !in token || fields.put(key, token.substringAfter('=')) != null) {
+            throw TorProtocolException("Malformed or duplicate $prefix authentication field")
+        }
+    }
+    return fields
+}
+
+private fun Map<String, String>.hexField(name: String): ByteArray {
+    val value = get(name)
+    if (value == null || value.length != 64 || value.any { it.digitToIntOrNull(16) == null }) {
+        throw TorProtocolException("SAFECOOKIE $name must contain exactly 32 hexadecimal bytes")
+    }
+    return value.hexToBytes()
 }
