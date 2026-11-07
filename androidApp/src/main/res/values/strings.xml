@@ -1,3 +1,16 @@
 <resources>
-    <string name="app_name">Onion Talkie</string>
+    <string name="app_name">Onion Dial</string>
+    <string name="online_channel_name">Onion Dial online</string>
+    <string name="online_channel_description">Keeps Tor available while you are online.</string>
+    <string name="tor_offline">Tor is offline</string>
+    <string name="tor_starting">Starting Tor</string>
+    <string name="tor_bootstrapping">Connecting to Tor (%1$d%%)</string>
+    <string name="tor_connected">Tor connected</string>
+    <string name="tor_failed">Tor could not start</string>
+    <string name="go_offline">Stop Tor</string>
+    <string name="notification_rationale_title">Stay available for Onion Dial calls</string>
+    <string name="notification_rationale_message">Onion Dial needs a persistent notification while Tor is running, so you can see that it is online and stop it at any time.</string>
+    <string name="continue_label">Continue</string>
+    <string name="cancel_label">Cancel</string>
+    <string name="notification_permission_denied">Notifications are needed to start Tor.</string>
 </resources>

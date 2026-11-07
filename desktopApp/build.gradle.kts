@@ -10,6 +10,7 @@ kotlin {
 
 dependencies {
     implementation(project(":ui"))
+    implementation(project(":shared"))
     implementation(compose.desktop.currentOs)
 }
 
@@ -17,7 +18,7 @@ compose.desktop {
     application {
         mainClass = "dev.junepark.oniontalkie.desktop.MainKt"
         nativeDistributions {
-            packageName = "OnionTalkie"
+            packageName = "OnionDial"
             packageVersion = "0.1.0"
         }
     }

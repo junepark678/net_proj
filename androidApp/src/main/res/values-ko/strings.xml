@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">Onion Dial</string>
+    <string name="online_channel_name">Onion Dial 온라인</string>
+    <string name="online_channel_description">온라인 상태에서 Tor를 사용할 수 있도록 유지합니다.</string>
+    <string name="tor_offline">Tor 오프라인</string>
+    <string name="tor_starting">Tor 시작 중</string>
+    <string name="tor_bootstrapping">Tor 네트워크 연결 중 (%1$d%%)</string>
+    <string name="tor_connected">Tor 연결됨</string>
+    <string name="tor_failed">Tor를 시작할 수 없습니다</string>
+    <string name="go_offline">Tor 중지</string>
+    <string name="notification_rationale_title">Onion Dial 통화 대기</string>
+    <string name="notification_rationale_message">Tor가 실행되는 동안 온라인 상태를 표시하고 언제든 중지할 수 있도록 지속 알림이 필요합니다.</string>
+    <string name="continue_label">계속</string>
+    <string name="cancel_label">취소</string>
+    <string name="notification_permission_denied">Tor를 시작하려면 알림 권한이 필요합니다.</string>
+</resources>

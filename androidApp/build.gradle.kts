@@ -36,6 +36,7 @@ kotlin {
 
 dependencies {
     implementation(project(":ui"))
+    implementation(project(":shared"))
     implementation(libs.androidx.activity.compose)
     implementation(libs.tor.android)
 }
