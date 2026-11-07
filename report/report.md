@@ -54,14 +54,16 @@ Onion Dial은 Android와 데스크톱에서 각 기기가 직접 Tor onion servi
 
 | 시나리오 | RTT p50/p95 (ms) | 지터 p50/p95 (ms) | PLC 비율 |
 |---|---:|---:|---:|
-| E1 LAN baseline | 3 / 4.4 | 1.3 / 2.5 | 0.14% |
+| E1 simulated LAN profile | 3 / 4.4 | 1.3 / 2.5 | 0.14% |
 | E2 same-host Tor | 1,086.5 / 20,152.8 | 27.2 / 61.3 | 48.47% |
 
 두 시나리오의 앱 TX 평균은 모두 27.65 kbps였다. 단순화 MOS proxy는 E1 4.09, E2 1.00이다.
 
-각 시나리오는 3회 통화이며 통화마다 두 끝점의 CSV를 저장했다. 표의 통계는 6개 끝점 로그에 기록된 완전한 1초 구간을 합쳐 계산했다. E1은 한 JVM의 두 통화 엔진을 메모리 채널로 연결한 기준 실험이다. E2는 한 Linux 호스트에서 두 개의 실제 Tor 클라이언트와 onion service를 사용했지만, 두 끝점은 같은 인터넷 회선과 NAT를 공유했다. 두 실험 모두 사람이 말한 음성이 아니라 440 Hz 시험음을 썼다. E2는 Android-데스크톱 실통화나 모바일 CGNAT 실험이 아니다.
+문헌 비교: 2005년 자발적 NAT Check 응답에서는 UDP 홀 펀칭이 310/380 (82%), TCP가 184/286 (64%) NAT 보고에서 호환됐다[7]. 이는 오래된 자기선택 표본의 호환성이지 오늘날 CGNAT 성공률이 아니다. 2022년 공개 5G V2N 측정에서는 mmWave 구간의 STUN 연결 앱 계층 지연이 TURN보다 15% 낮았고, 다른 무선 구간은 대체로 비슷했다[10]. 각 결과는 해당 표본·망에 한정되어 이번 Tor 측정값과 직접 비교할 수 없다.
 
-E2의 손실률은 0%였지만 PLC(늦은 음성 프레임을 감춘 횟수) 비율은 48.47%였다. TCP가 데이터를 재전송해도 너무 늦게 도착한 프레임은 재생 시점에 쓸 수 없기 때문이다. 이 측정 경로에서는 p95 RTT가 약 20초까지 올라 자연스러운 양방향 대화에 부적합했다. 이는 세 번의 같은 호스트 실험 결과이지, 모든 Tor 회선의 성능을 대표하지는 않는다. TX 수치는 앱 스트림의 프레임·프로토콜 데이터를 포함하고 Tor 릴레이 암호화 오버헤드는 제외한다.
+각 시나리오는 3회 통화이며 통화마다 양 끝점의 CSV를 저장했다. 표는 6개 끝점 로그의 완전한 1초 구간을 합친 통계다. E1은 한 JVM의 두 CallEngine을 메모리 채널로 연결하고 약 4 ms RTT의 LAN 프로파일을 모사한 실험으로, 실제 LAN 측정이 아니다. E2는 같은 Linux 호스트·회선·NAT에서 독립 Tor 클라이언트 2개로 수행했다. 둘 다 440 Hz 시험음을 썼으며, E2는 Android-데스크톱 통화나 모바일 CGNAT 실험이 아니다.
+
+E2 패킷 손실은 0%였지만 PLC 비율은 48.47%였다. TCP 재전송 프레임이 재생 시각 뒤 도착하면 쓸 수 없다. p95 RTT 약 20초는 자연스러운 대화에 부적합했다. 이는 동일 호스트 3회 결과이며 일반 Tor 성능을 대표하지 않는다. TX는 앱 프레임·프로토콜 데이터를 포함하고 Tor 암호화 오버헤드는 제외한다.
 
 참고: MOS는 G.107 단순화 식에 RTT의 절반과 버퍼 지연을 넣어 계산한 참고값이다. 코덱 손상 계수는 비슷한 비트레이트의 G.722.2 자료를 빌린 것이므로 Opus의 검증된 MOS나 청취 평가가 아니다 [9].
 
@@ -71,7 +73,7 @@ PAT 뒤에서 직접 도달성이 필요한 앱은 먼저 STUN/ICE 홀 펀칭을
 
 Tor가 범죄 전용 기술이라는 인상도 정확하지 않다. SecureDrop은 언론 제보자가 Tor onion service로 자료와 메시지를 보내도록 실제 운영되는 공개 시스템이다 [8]. 이 사례가 모든 Tor 사용을 정당화하는 것은 아니지만, 익명성과 위치 보호가 언론 제보처럼 합법적인 목적에 쓰인다는 점을 보여 준다.
 
-측정의 한계도 분명하다. 실제 Android와 데스크톱 장치 간 음성 통화, 모바일 CGNAT 환경, 사람의 청취 평가는 아직 하지 않았다. 따라서 E1은 미디어 처리 기준선이고 E2는 같은 호스트의 Tor 시뮬레이터 보조 자료다. 실제 기기와 서로 다른 네트워크에서의 검증이 있어야 제품 품질이나 일반적인 Tor 통화 성능을 결론낼 수 있다.
+한계: 실제 Android-데스크톱 통화, 모바일 CGNAT, 사람 청취 평가는 하지 않았다. E1은 미디어 기준선이고 E2는 같은 호스트의 보조 실험이므로 제품 품질이나 일반 Tor 성능을 입증하지 않는다.
 
 \newpage
 
@@ -86,3 +88,4 @@ Tor가 범죄 전용 기술이라는 인상도 정확하지 않다. SecureDrop�
 7. B. Ford, P. Srisuresh, D. Kegel, “Peer-to-Peer Communication Across Network Address Translators,” USENIX ATC, 2005. [USENIX paper](https://www.usenix.org/conference/2005-usenix-annual-technical-conference/peer-peer-communication-across-network-address)
 8. Freedom of the Press Foundation, “SecureDrop Documentation: Onion Service.” [SecureDrop docs](https://docs.securedrop.org/en/stable/glossary.html)
 9. ITU-T, Recommendation G.113, “Transmission impairments due to speech processing,” 09/2024, Appendix IV; Recommendation G.107, “The E-model.” [ITU-T G.113](https://www.itu.int/rec/T-REC-G.113-202409-I/en) · [ITU-T G.107](https://www.itu.int/rec/T-REC-G.107/en)
+10. B. Kihei, T. Davison, M. Okpok, J. Song, “Comparison of V2N STUN/TURN Round Trip Time Performance on a Public 5G Network,” IEEE VTC2022-Fall, 2022. [IEEE Xplore](https://doi.org/10.1109/VTC2022-Fall57202.2022.10012872)

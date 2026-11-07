@@ -1,6 +1,6 @@
 # Metrics data layout
 
-Archived experiments are grouped under `report/data/E1/`, `E2/`, and `E3/`, then by scenario (`E1_lan_loopback`, `E2_same_nat_tor`, or `E3_cgnat_tor`). Store each endpoint's per-call CSV beside its `summary.json` in a per-call subdirectory; record setup details in the experiment's `conditions.md`. The app and simulator write one CSV per call with a header and one row per sample interval: `t_s,rtt_ms,jitter_ms,loss_pct,late,plc,buffer_ms,tx_kbps,rx_kbps,circuit_id,hops`. The report tool finds the scenario name in any parent directory. Keep generated reports in ignored `report/out/`.
+Archived experiments are grouped under `report/data/E1/`, `E2/`, and `E3/`, then by scenario (`E1_lan_loopback`, `E2_same_nat_tor`, or `E3_cgnat_tor`). E1 currently uses paired in-memory channels with a simulated LAN latency profile; it is not a physical LAN measurement. Store each endpoint's per-call CSV beside its `summary.json` in a per-call subdirectory; record setup details in the experiment's `conditions.md`. The app and simulator write one CSV per call with a header and one row per sample interval: `t_s,rtt_ms,jitter_ms,loss_pct,late,plc,buffer_ms,tx_kbps,rx_kbps,circuit_id,hops`. The report tool finds the scenario name in any parent directory. Commit `table.md` and `summary.json` under `report/out/`; the PDF and generated plots remain ignored.
 
 Run from the repository root (the shell expands the CSV paths):
 
@@ -9,7 +9,9 @@ python3 -I tools/report_stats.py $(find report/data -type f -name '*.csv') --out
 python3 -I tools/tests/test_report_stats.py
 ```
 
-No third-party packages are needed for `table.md` and `summary.json`.
+No third-party packages are needed for `table.md` and `summary.json`. Commit those
+two reproducible analysis outputs. PDFs and generated plot files remain local;
+the report includes the required traversal diagram and measured results table.
 With matplotlib installed in the selected Python environment, the tool also
 writes `rtt_timeseries.png` and `jitter_cdf.png`. Without it, a warning explains
 that figures were skipped. Unsupported scenario paths warn and are skipped;
@@ -38,6 +40,9 @@ include paused playout or partial intervals without their summary sidecar. Late
 frames are not added to this denominator. `circuit_id` and `hops` describe the
 circuit and are not averaged.
 
+The summary's `n_endpoint_csvs` counts one file per endpoint; it is not a count
+of paired calls. Three two-ended trials therefore contribute six endpoint CSVs.
+
 MOS is labeled **simplified E-model (proxy/custom Ie/Bpl)**. Defaults are
 **Ie=10, Bpl=4.9**, a **proxy: G.722.2 23.85 kbps**, from
 [ITU-T G.113, *Transmission impairments due to speech processing* (2024),
@@ -65,6 +70,6 @@ of G.107.1. Borrowing wideband planning factors does not validate that model:
 the estimate is indicative, not a measured or validated Opus/wideband MOS.
 
 Figures are 8 cm wide with 7 pt legend text and one entry per experiment:
-E1 (LAN loopback), E2 (same NAT via Tor), E3 (CGNAT via Tor). Lighter RTT
+E1 (simulated LAN profile), E2 (same NAT via Tor), E3 (CGNAT via Tor). Lighter RTT
 lines show individual calls using the experiment's shared grayscale, line
 style, and marker; jitter CDFs pool calls within each experiment.

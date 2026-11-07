@@ -1,4 +1,4 @@
-# E1 conditions: LAN loopback simulator
+# E1 conditions: simulated LAN profile over in-memory channels
 
 - Date: 2026-11-07 UTC
 - Trials: three calls, each approximately 120 seconds; both endpoints are archived as separate CSVs with their `summary.json` sidecars.

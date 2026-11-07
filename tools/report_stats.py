@@ -127,7 +127,7 @@ def main():
               'p50 jitter (ms)', 'p95 jitter (ms)', 'Mean interval loss (%)',
               'PLC rate (fraction)', 'Mean buffer delay (ms)', 'Mean tx (kbps)',
               'Mean rx (kbps)', f'MOS: {MOS_LABEL}')
-    lines = ['| Scenario | n runs | ' + ' | '.join(labels) + ' |',
+    lines = ['| Scenario | endpoint CSVs | ' + ' | '.join(labels) + ' |',
              '|---|---:|' + '---:|' * len(keys)]
     summary = {}
     styles = ['-', '--', ':']
@@ -141,7 +141,7 @@ def main():
         runs = groups[scenario]
         rows = [row for _, run in runs for row in run]
         if not rows:
-            summary[scenario] = {'n_runs': 0, 'metrics': None}
+            summary[scenario] = {'n_endpoint_csvs': 0, 'metrics': None}
             lines.append(f'| {scenario} | 0 | ' + ' | '.join(['—'] * len(keys)) + ' |')
             continue
         rtt_values = [float(row['rtt_ms']) for row in rows if row['rtt_ms'].strip()]
@@ -161,7 +161,7 @@ def main():
                   mean['rx_kbps'],
                   mos(mean_rtt, mean['buffer_ms'], mean['loss_pct'],
                       parameters['ie'], parameters['bpl']) if mean_rtt is not None else None]
-        summary[scenario] = {'n_runs': len(runs), 'mos_model': MOS_LABEL,
+        summary[scenario] = {'n_endpoint_csvs': len(runs), 'mos_model': MOS_LABEL,
                              'mos_parameters': parameters,
                              'metrics': dict(zip(keys, values))}
         lines.append(f'| {scenario} | {len(runs)} | ' +
@@ -198,7 +198,7 @@ def main():
                   '', f'MOS parameters: Ie={parameters["ie"]:g} ({parameters["ie_source"]});',
                   f'Bpl={parameters["bpl"]:g} ({parameters["bpl_source"]}).',
                   'Indicative only; not a validated Opus or wideband MOS measurement.',
-                  'Figure legends: E1 = LAN loopback; E2 = same NAT via Tor; E3 = CGNAT via Tor.',
+                  'Figure legends: E1 = simulated LAN profile; E2 = same NAT via Tor; E3 = CGNAT via Tor.',
                   'RTT lines show individual calls; jitter CDFs pool calls by experiment.'])
     (out/'table.md').write_text('\n'.join(lines) + '\n')
     (out/'summary.json').write_text(json.dumps(summary, indent=2) + '\n')

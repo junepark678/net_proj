@@ -55,7 +55,7 @@ class ReportStatsTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 summary = json.loads((out/'summary.json').read_text())
                 group = summary['E1_lan_loopback']
-                self.assertEqual(group['n_runs'], 2)
+                self.assertEqual(group['n_endpoint_csvs'], 2)
                 self.assertEqual(group['mos_model'], stats.MOS_LABEL)
                 self.assertEqual(group['mos_parameters'], {
                     'ie': 10, 'bpl': 4.9,
@@ -70,7 +70,7 @@ class ReportStatsTest(unittest.TestCase):
                     self.assertAlmostEqual(group['metrics'][key], value, places=8, msg=key)
                 self.assertIsNone(summary['E2_same_nat_tor']['metrics'])
                 table = (out/'table.md').read_text()
-                for label in ('Mean RTT', 'p50 jitter', 'PLC rate', stats.MOS_LABEL, '0.1000'):
+                for label in ('endpoint CSVs', 'Mean RTT', 'p50 jitter', 'PLC rate', stats.MOS_LABEL, '0.1000'):
                     self.assertIn(label, table)
                 if 'matplotlib unavailable' in result.stderr:
                     self.assertFalse((out/'jitter_cdf.png').exists())

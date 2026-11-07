@@ -1,0 +1,54 @@
+{
+  "E1_lan_loopback": {
+    "n_endpoint_csvs": 6,
+    "mos_model": "simplified E-model (proxy/custom Ie/Bpl)",
+    "mos_parameters": {
+      "ie": 10.0,
+      "bpl": 4.9,
+      "ie_source": "proxy: G.722.2 23.85 kbps, diotic, uniform loss; ITU-T G.113 (2024), Appendix IV Table IV.4",
+      "bpl_source": "proxy: G.722.2 23.85 kbps, diotic, uniform loss; ITU-T G.113 (2024), Appendix IV Table IV.4"
+    },
+    "metrics": {
+      "mean_rtt_ms": 2.6064425770308124,
+      "p50_rtt_ms": 3.0,
+      "p95_rtt_ms": 4.350000000000023,
+      "mean_jitter_ms": 1.401888888888889,
+      "p50_jitter_ms": 1.25,
+      "p95_jitter_ms": 2.5114999999999985,
+      "loss_pct": 0.0,
+      "plc_rate": 0.0014444444444444444,
+      "mean_buffer_ms": 52.75,
+      "mean_tx_kbps": 27.653291666666668,
+      "mean_rx_kbps": 27.653291666666668,
+      "estimated_mos": 4.093847299910426
+    }
+  },
+  "E2_same_nat_tor": {
+    "n_endpoint_csvs": 6,
+    "mos_model": "simplified E-model (proxy/custom Ie/Bpl)",
+    "mos_parameters": {
+      "ie": 10.0,
+      "bpl": 4.9,
+      "ie_source": "proxy: G.722.2 23.85 kbps, diotic, uniform loss; ITU-T G.113 (2024), Appendix IV Table IV.4",
+      "bpl_source": "proxy: G.722.2 23.85 kbps, diotic, uniform loss; ITU-T G.113 (2024), Appendix IV Table IV.4"
+    },
+    "metrics": {
+      "mean_rtt_ms": 6217.477011494253,
+      "p50_rtt_ms": 1086.5,
+      "p95_rtt_ms": 20152.75,
+      "mean_jitter_ms": 31.194388888888888,
+      "p50_jitter_ms": 27.185000000000002,
+      "p95_jitter_ms": 61.29699999999992,
+      "loss_pct": 0.0,
+      "plc_rate": 0.4847222222222222,
+      "mean_buffer_ms": 52.083333333333336,
+      "mean_tx_kbps": 27.653666666666666,
+      "mean_rx_kbps": 26.816375,
+      "estimated_mos": 1.0
+    }
+  },
+  "E3_cgnat_tor": {
+    "n_endpoint_csvs": 0,
+    "metrics": null
+  }
+}
