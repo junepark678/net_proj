@@ -81,7 +81,7 @@ class TorDialerDuplexTest {
                 assertFalse("Peer has not released the read yet", reader.isCompleted)
                 releaseRead.countDown()
                 assertEquals(pong, withTimeout(5_000) { reader.await() })
-                received.get(5, TimeUnit.SECONDS)
+                assertArrayEquals(FrameCodec.encode(ping), received.get(5, TimeUnit.SECONDS))
             } finally {
                 releaseRead.countDown()
                 channel.close()

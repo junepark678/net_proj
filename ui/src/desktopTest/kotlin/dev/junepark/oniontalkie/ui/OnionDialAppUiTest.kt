@@ -59,6 +59,7 @@ class OnionDialAppUiTest {
 
         compose.onNodeWithText("Contact is offline").assertIsDisplayed()
         compose.onNodeWithText(peer).assertIsDisplayed()
+        compose.onNodeWithText("Home").performClick()
         compose.onNodeWithText("Go offline").assertIsDisplayed()
     }
 }
