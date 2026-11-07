@@ -1,6 +1,7 @@
 package dev.junepark.oniontalkie.identity
 
 import java.nio.file.Files
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardCopyOption.ATOMIC_MOVE
@@ -35,7 +36,11 @@ private class DirectoryStorage(private val directory: Path) : Storage {
         val temporary = Files.createTempFile(directory, ".onion-talkie-", ".tmp")
         try {
             Files.write(temporary, contents.toByteArray(Charsets.UTF_8))
-            Files.move(temporary, destination, ATOMIC_MOVE, REPLACE_EXISTING)
+            try {
+                Files.move(temporary, destination, ATOMIC_MOVE, REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temporary, destination, REPLACE_EXISTING)
+            }
         } finally {
             Files.deleteIfExists(temporary)
         }

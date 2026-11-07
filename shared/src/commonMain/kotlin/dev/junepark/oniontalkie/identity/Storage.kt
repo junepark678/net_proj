@@ -7,7 +7,10 @@ interface Storage {
 }
 
 /**
- * Creates storage beneath an app-owned data directory. Android callers supply `Context.filesDir.path`;
- * desktop callers supply their chosen application data directory. Own one store instance per file.
+ * Creates storage beneath an app-owned data directory, defaulting to [appDataDir].
+ * Own one store instance per file.
  */
-expect fun directoryStorage(dataDirectory: String): Storage
+expect fun directoryStorage(dataDirectory: String = appDataDir()): Storage
+
+/** Android's initialized private files directory, or the desktop XDG data directory/onion-talkie. */
+expect fun appDataDir(): String
