@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.android.multiplatform.library)
 }
 
@@ -14,6 +15,7 @@ kotlin {
         withHostTestBuilder {}
     }
     jvm("desktop")
+    applyDefaultHierarchyTemplate()
 
     applyDefaultHierarchyTemplate()
 
@@ -21,6 +23,7 @@ kotlin {
         commonMain.dependencies {
             api(libs.kotlinx.coroutines.core)
             api(libs.kotlinx.io.core)
+            implementation(libs.kotlinx.serialization.json)
         }
         val jvmSharedMain by creating {
             dependsOn(commonMain.get())

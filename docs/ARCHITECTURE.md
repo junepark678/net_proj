@@ -24,6 +24,39 @@ net_proj/
 - Each device adds the peer's x25519 public key to its own onion service's
   `authorized_clients`, so only paired peers can even reach the rendezvous.
 
+The `shared` identity package accepts key material from the Tor key owner (#7);
+`IdentityStore.loadOrCreate` persists it without generating or rotating keys.
+`Identity.pairingPayload()` exports only public material. `PairingPayload.parse`
+returns a sealed success/failure result and validates the [v3 onion checksum](https://spec.torproject.org/rend-spec/encoding-onion-addresses.html),
+unpadded 32-byte base32 client-auth keys, framing, and a 200-character/UTF-8-byte
+budget. Display names may contain Unicode, spaces, and semicolons, but not
+control characters. Parsing normalizes onion addresses to lowercase and
+ASCII base32 keys to uppercase; non-ASCII key characters are rejected before case conversion.
+
+`directoryStorage(dataDirectory = appDataDir())` is the platform storage boundary.
+Android must call `AndroidAppData.init(context)` from `Application.onCreate` first;
+the default then uses the application's private `filesDir`. Desktop defaults to
+`$XDG_DATA_HOME/onion-talkie`, falling back to `~/.local/share/onion-talkie`.
+Its JVM implementation is shared through `jvmSharedMain`, keeping `commonMain`
+free of platform APIs. JSON files are written to a temporary file in the same
+directory and atomically moved into place; a filesystem that cannot do an atomic
+replace makes the write fail with the previous file intact rather than risk a torn
+file. Identity files use owner-only permissions on POSIX filesystems. Use one `IdentityStore` and one
+`ContactStore` per directory. Corrupt or invalid files raise an error rather
+than silently replacing an identity or discarding peers. Unknown JSON fields are
+ignored for forward compatibility.
+
+`ContactStore.open(storage, isOnline, republish)` exposes `contacts` as a
+`StateFlow` and provides `add`, `remove`, and `list`. Re-pairing the same onion
+updates that entry. The Tor owner supplies `isOnline` and a suspend `republish`
+callback that receives the complete set of public authorization keys after a
+persisted key-set change while online. On going online, #7 must read `list()`
+for offline changes. The callback also handles removals; it must not call back
+into the store. Persistence and the state update finish together despite coroutine
+cancellation. Publication-hook errors are logged without failing the saved operation;
+coroutine cancellation still propagates. Tor must retry from the current list when
+going online. Actual Tor publication awaits #7.
+
 ## Presence ("Go online") without push
 
 - Going online = start Tor (if not running), publish the onion service
