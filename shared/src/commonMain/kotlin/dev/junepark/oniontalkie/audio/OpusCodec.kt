@@ -15,7 +15,7 @@ interface OpusCodec {
     /**
      * Writes exactly 960 PCM samples into [out]. A null [packet] conceals one lost
      * 20 ms frame using decoder history. Non-null packets must be 20 ms mono Opus.
-     * Invalid input sizes or formats throw [IllegalArgumentException].
+     * Invalid buffer sizes, durations, or channel counts throw [IllegalArgumentException].
      */
     fun decode(packet: ByteArray?, out: ShortArray)
 }
