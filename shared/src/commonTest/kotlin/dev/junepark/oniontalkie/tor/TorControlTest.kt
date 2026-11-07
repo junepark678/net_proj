@@ -359,6 +359,30 @@ class TorControlTest {
         }
     }
 
+    @Test fun completeSuccessReplyFollowedByEofIsStillDelivered() = runTest {
+        val transport = TranscriptTransport()
+        val control = TorControl(transport, backgroundScope)
+        val pending = async { control.getInfo("version") }
+        assertEquals("GETINFO version", transport.output.receive())
+        transport.feed("250 version=final")
+        transport.input.close()
+        assertEquals("final", pending.await())
+        assertTrue(transport.closed)
+        assertFailsWith<TorConnectionClosedException> { control.getInfo("version") }
+    }
+
+    @Test fun completeErrorReplyFollowedByEofIsStillReported() = runTest {
+        val transport = TranscriptTransport()
+        val control = TorControl(transport, backgroundScope)
+        val pending = async { assertFailsWith<TorCommandException> { control.command("AUTHENTICATE 00") } }
+        assertEquals("AUTHENTICATE 00", transport.output.receive())
+        transport.feed("515 Authentication failed: Wrong length on authentication cookie.")
+        transport.input.close()
+        assertEquals(515, pending.await().reply.code)
+        assertTrue(transport.closed)
+        assertFailsWith<TorConnectionClosedException> { control.getInfo("version") }
+    }
+
     @Test fun closeUnblocksPendingCommandAndIsIdempotent() = runTest {
         val transport = TranscriptTransport()
         val control = TorControl(transport, backgroundScope)

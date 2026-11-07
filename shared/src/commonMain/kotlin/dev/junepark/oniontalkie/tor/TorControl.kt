@@ -3,6 +3,7 @@ package dev.junepark.oniontalkie.tor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
@@ -34,10 +35,11 @@ class TorControl internal constructor(
 ) {
     constructor(transport: ControlTransport, scope: CoroutineScope) : this(transport, scope, ::secureControlNonce)
 
-    private val lifetime = SupervisorJob(scope.coroutineContext[kotlinx.coroutines.Job])
+    private val lifetime = SupervisorJob(scope.coroutineContext[Job])
     private val clientScope = CoroutineScope(scope.coroutineContext + lifetime)
     private val replies = Channel<TorReply>(1)
     private val commandMutex = Mutex()
+    private val readerJob: Job
     private val mutableBootstrap = MutableStateFlow(0)
     private val mutableEvents = MutableSharedFlow<TorEvent>(
         extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -51,7 +53,7 @@ class TorControl internal constructor(
     val events: SharedFlow<TorEvent> = mutableEvents.asSharedFlow()
 
     init {
-        val readerJob = clientScope.launch {
+        readerJob = clientScope.launch {
             try {
                 val reader = ReplyReader(transport)
                 while (true) {
@@ -162,6 +164,12 @@ class TorControl internal constructor(
         // Waiting for admission remains cancellable by the caller. Once admitted, the
         // client owns the mutex until the complete reply (or auth handshake) is consumed.
         commandMutex.lock()
+        if (!lifetime.isActive) {
+            commandMutex.unlock()
+            currentCoroutineContext().ensureActive()
+            throw replies.tryReceive().exceptionOrNull()
+                ?: TorConnectionClosedException("Tor control connection was closed")
+        }
         val pending = clientScope.async(start = CoroutineStart.UNDISPATCHED) {
             try { block() } finally { commandMutex.unlock() }
         }
@@ -204,7 +212,10 @@ class TorControl internal constructor(
             TorConnectionClosedException("Tor control command was cancelled", cause)
         } else cause)
         runCatching { transport.close() }
-        lifetime.cancel()
+        // Stop the reader, but let a command that already holds its complete reply (buffered
+        // in `replies` before EOF) finish normally instead of being cancelled mid-flight.
+        readerJob.cancel()
+        lifetime.complete()
     }
 
     private companion object {
