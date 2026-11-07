@@ -15,5 +15,6 @@ The CI jobs are:
 
 The `qualify-emulator` and `qualify-tor` jobs are opt-in placeholders activated
 by the corresponding pull request labels; adding a label triggers a run. Their qualification bodies are
-tracked by issues #24 and #25. Branch protection on `main` requires pull
-requests and passing `unit` and `android` checks; force pushes are disabled.
+tracked by issues #24 and #25. Branch protection on `main` requires the
+`unit` and `android` checks to pass on an up-to-date head before a merge; no
+review approvals are required and force pushes are disabled.
