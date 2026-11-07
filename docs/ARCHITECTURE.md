@@ -57,7 +57,8 @@ for offline changes. The callback also handles removals; it must not call back
 into the store. Persistence and the state update finish together despite coroutine
 cancellation. Publication-hook errors are logged without failing the saved operation;
 coroutine cancellation still propagates. Tor must retry from the current list when
-going online. Actual Tor publication awaits #7.
+going online. `OnionService` supplies that publication hook; see
+`docs/TOR_CONTROL.md` for wiring.
 
 ## Presence ("Go online") without push
 
@@ -132,6 +133,28 @@ is independently single-threaded. Malformed payloads rejected by Concentus throw
 - Common code owns bootstrap progress parsing, `ADD_ONION` (with
   `ClientAuthV3`), `GETINFO status/bootstrap-phase`, and circuit event
   logging.
+
+`OnionService.open` uses `IdentityStore` to atomically persist Tor's expanded
+ED25519-V3 private key alongside the onion address and our x25519 client-auth
+keypair. First launch briefly creates a self-authorized service to obtain the
+address and key, then deletes it before returning an offline owner. Reopening
+does not contact Tor or regenerate keys. An older identity without a service key
+fails explicitly; it cannot recover an unavailable service key by rotating keys.
+The x25519 implementation uses Bouncy Castle's lightweight API in `jvmSharedMain`
+for both desktop and Android API 26+, without installing a global JCA provider.
+
+Publication maps virtual port 9999 to the caller's loopback listener. The service
+uses `Flags=V3Auth` and stays attached to the dedicated control connection, so
+disconnecting Tor control also removes it. An empty peer list authorizes only
+our own key, keeping an unpaired device private. Changing peers deletes and
+re-adds the same service with the complete new authorization list. Listener and
+existing call-connection lifetimes remain the caller's responsibility.
+
+`ClientOnionAuth` writes our private x25519 half to one `.auth_private` file per
+peer we dial. The process owner configures `ClientOnionAuthDir` to that storage
+directory and loads/reloads Tor before dialing. Files use the existing atomic
+storage boundary and 0600 on POSIX. Android uses the application's private data
+directory; Android Keystore wrapping of the secret material remains a follow-up.
 
 ## Metrics and the report
 

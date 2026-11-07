@@ -85,12 +85,79 @@ Cancelling while waiting for the command mutex does not send that command or
 disturb the active command. Cancelling the owning scope releases the TCP socket
 even when its reader is idle.
 `close()` disconnects the client; only `signal(TorSignal.SHUTDOWN)` requests
-process shutdown. Process launch and onion-service commands belong to their
-own components.
+process shutdown. Process launch belongs to the platform process owner;
+onion-service commands are provided by `OnionService` below.
 
 Protocol references: [message framing](https://spec.torproject.org/control-spec/message-format.html),
 [commands](https://spec.torproject.org/control-spec/commands.html), and
 [replies and events](https://spec.torproject.org/control-spec/replies.html).
+
+## Persistent authorized onion service
+
+Use one `OnionService` per identity directory with a dedicated authenticated
+control connection. The caller supplies a listening port bound to 127.0.0.1;
+Tor maps virtual port 9999 to it. The caller also owns listener/call shutdown.
+
+```kotlin
+val identityStore = IdentityStore(directoryStorage())
+val publisher = OnionService.open(control, localListenerPort, identityStore, "June")
+val contacts = ContactStore.open(
+    directoryStorage(),
+    isOnline = { publisher.onionAddress.value != null },
+    republish = { keys -> publisher.publish(keys.map(::PeerAuthKey)); Unit },
+)
+// Identity is available offline, for pairing via publisher.identity.pairingPayload().
+// Every online transition must read the full list, including changes made offline.
+val onion = publisher.publish(contacts.list().map { PeerAuthKey(it.clientAuthPub) })
+// Collect control.events BEFORE publish if waiting for HS_DESC UPLOADED.
+// ADD_ONION success alone acknowledges creation, not descriptor upload.
+publisher.unpublish()
+```
+
+On first launch, `open` generates our x25519 pair and sends
+`ADD_ONION NEW:ED25519-V3 Flags=V3Auth Port=9999,127.0.0.1:<port>`
+with our own `ClientAuthV3` key. It parses `ServiceID` and the tagged `PrivateKey`,
+then lets `IdentityStore` persist all three keys and the address in `identity.json`.
+It removes that temporary service before returning. This permits offline pairing
+after initialization without publishing an unrestricted service. Later opens
+only load and validate the saved keys, including x25519 pair correspondence;
+missing or corrupt keys are reported without silently rotating the identity.
+
+`publish` sends `ADD_ONION ED25519-V3:<saved blob> Flags=V3Auth`
+with one `ClientAuthV3=<base32 public key>` argument per distinct peer.
+An empty peer list authorizes only our own key. It never uses `Detach` or
+`DiscardPK`. Duplicate publication with the same key set is idempotent;
+changing keys sends DEL_ONION then ADD_ONION. Failure after deletion leaves the
+publisher offline. `unpublish` sends `DEL_ONION <56-character service id>` and
+is idempotent offline. It retains known state on a negative DEL_ONION response.
+
+Cancelling an in-flight service operation closes its dedicated control connection
+because a drained ADD_ONION reply could otherwise create an untracked service.
+Failed persistence and malformed successful replies also close the connection.
+First-run DEL_ONION cleanup has a 10-second bound and closes the connection on
+failure. Apply caller timeouts to other operations. Reconnect and reopen after
+a disconnect; retry/backoff is not implemented. `onionAddress` reports locally
+acknowledged state, and must not be treated as a Tor connection-health monitor.
+
+Before dialing a contact, write **our** private key for that contact's onion:
+
+```kotlin
+// Configure Tor's ClientOnionAuthDir to this same private directory.
+val auth = ClientOnionAuth(directoryStorage(clientAuthDirectory))
+for (peer in contacts.list()) auth.writeForPeer(peer.onion, publisher.identity)
+// Load files when starting Tor. If it is already running, reload before dialing:
+control.command("SIGNAL HUP")
+```
+
+Files are `<56-character onion without .onion>.auth_private`, containing
+`<onion>:descriptor:x25519:<our base32 private key>` and a final LF. File names
+and contents reuse pairing's v3 checksum and canonical 32-byte base32 validation.
+Both these files and `identity.json` use atomic replacement and POSIX 0600 through
+`directoryStorage`. Android's directory is its initialized private app data directory;
+Keystore wrapping remains a follow-up. Do not export the private identity JSON.
+
+Formats follow the [ADD_ONION control specification](https://spec.torproject.org/control-spec/commands.html#add_onion)
+and [Tor client authorization guide](https://community.torproject.org/onion-services/advanced/client-auth/).
 
 ## Verification
 
@@ -119,3 +186,28 @@ ANDROID_HOME="$ANDROID_HOME" TOR_CONTROL_SMOKE_BINARY=/path/to/tor \
 
 For a binary distributed with bundled shared libraries, set `LD_LIBRARY_PATH`
 to that bundle's library directory as required by the distribution.
+
+`OnionServiceIntegrationTest` uses a separate control connection to a trusted
+running Tor on loopback port 9051, or `TOR_ONION_TEST_CONTROL_PORT`. It skips if
+that port is unreachable or no `TOR_ONION_TEST_COOKIE` file is supplied. It does
+not alter Tor's configuration or shut down the Tor process. It creates a temporary
+identity and loopback listener, publishes with a peer authorization key, waits up
+to 180 seconds for this service's `HS_DESC UPLOADED`, deletes it, and checks key
+persistence. Tor bootstrap has its own 180-second bound. The test always closes
+its control connection to remove any service left after a failure.
+
+```sh
+ANDROID_HOME=/home/june/Android/Sdk \
+TOR_ONION_TEST_CONTROL_PORT=9051 \
+TOR_ONION_TEST_COOKIE=/path/to/trusted/control_auth_cookie \
+  ./gradlew :shared:desktopTest --tests '*OnionServiceIntegrationTest' --rerun-tasks --no-build-cache
+```
+
+Ordinary tests cover NEW/reused-key commands, authorization flags, empty/changed
+peer lists, cancellation and storage failures, reply validation, RFC 7748 x25519
+key derivation, base32 padding bits, and the auth-private file format/permissions:
+
+```sh
+ANDROID_HOME=/home/june/Android/Sdk \
+  ./gradlew :shared:desktopTest :shared:testAndroidHostTest --rerun-tasks --no-build-cache
+```
