@@ -30,11 +30,12 @@ class Identity(
 /** Own one instance per app data directory. Invalid persisted data is reported rather than replaced. */
 class IdentityStore(private val storage: Storage) {
     private val mutex = Mutex()
+    private val json = Json { ignoreUnknownKeys = true }
 
     /** Calls [create] only on first launch, then persists before returning the identity. */
     suspend fun loadOrCreate(create: suspend () -> Identity): Identity = mutex.withLock {
         val existing = storage.read("identity.json")
-        if (existing != null) Json.decodeFromString<Identity>(existing)
-        else create().also { storage.write("identity.json", Json.encodeToString(it)) }
+        if (existing != null) json.decodeFromString<Identity>(existing)
+        else create().also { storage.write("identity.json", json.encodeToString(it)) }
     }
 }

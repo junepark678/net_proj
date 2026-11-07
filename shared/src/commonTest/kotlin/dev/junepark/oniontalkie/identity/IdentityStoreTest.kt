@@ -32,6 +32,17 @@ class IdentityStoreTest {
     }
 
     @Test
+    fun unknownSavedIdentityFieldsAreIgnored() = runTest {
+        val storage = MemoryStorage()
+        storage.files["identity.json"] =
+            """{"onion":"$ONION","clientAuthPub":"$KEY","clientAuthPrivate":"$OTHER_KEY","displayName":"June","future":true}"""
+        val restored = IdentityStore(storage).loadOrCreate { error("Identity already exists") }
+        assertEquals(ONION, restored.onion)
+        assertEquals(OTHER_KEY, restored.clientAuthPrivate)
+        assertEquals("June", restored.displayName)
+    }
+
+    @Test
     fun corruptIdentityIsNotOverwritten() = runTest {
         val storage = MemoryStorage()
         storage.files["identity.json"] = "broken"

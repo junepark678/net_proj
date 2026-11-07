@@ -1,12 +1,15 @@
 package dev.junepark.oniontalkie.identity
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -96,9 +99,61 @@ class ContactStoreTest {
     fun publicationFailureKeepsDurableContact() = runTest {
         val storage = MemoryStorage()
         val store = ContactStore.open(storage, { true }, { error("Tor unavailable") })
-        assertFailsWith<IllegalStateException> { store.add(payload()) }
+        store.add(payload())
         assertEquals(store.list(), ContactStore.open(storage).list())
         assertEquals(1, store.list().size)
+        assertTrue(store.remove(ONION))
+        assertTrue(ContactStore.open(storage).list().isEmpty())
+    }
+
+    @Test
+    fun onlineHookFailureDoesNotFailSavedOperation() = runTest {
+        val storage = MemoryStorage()
+        val store = ContactStore.open(storage, isOnline = { error("Status unavailable") })
+        store.add(payload())
+        assertEquals(listOf(Contact(ONION, KEY, "June")), store.list())
+        assertEquals(store.list(), ContactStore.open(storage).list())
+    }
+
+    @Test
+    fun cancellationAfterDiskWriteKeepsMemoryAndDiskInSyncForAddAndRemove() = runTest {
+        for (removing in listOf(false, true)) {
+            val backing = MemoryStorage()
+            if (removing) ContactStore.open(backing).add(payload())
+            val written = CompletableDeferred<Unit>()
+            val finish = CompletableDeferred<Unit>()
+            val storage = object : Storage {
+                override suspend fun read(name: String) = backing.read(name)
+                override suspend fun write(name: String, contents: String) {
+                    // Model DirectoryStorage's dispatcher hop and suspension after file replacement.
+                    withContext(StandardTestDispatcher(testScheduler)) {
+                        backing.write(name, contents)
+                        written.complete(Unit)
+                        finish.await()
+                    }
+                }
+            }
+            val store = ContactStore.open(storage)
+            val operation = launch {
+                if (removing) store.remove(ONION) else store.add(payload())
+            }
+            written.await()
+            operation.cancel()
+            finish.complete(Unit)
+            operation.join()
+            assertTrue(operation.isCancelled)
+            assertEquals(if (removing) emptyList() else listOf(Contact(ONION, KEY, "June")), store.list())
+            assertEquals(ContactStore.open(backing).list(), store.list())
+            assertEquals(store.list(), store.contacts.value)
+        }
+    }
+
+    @Test
+    fun unknownSavedContactFieldsAreIgnored() = runTest {
+        val storage = MemoryStorage()
+        storage.files["contacts.json"] =
+            """[{"onion":"$ONION","clientAuthPub":"$KEY","displayName":"June","future":true}]"""
+        assertEquals(listOf(Contact(ONION, KEY, "June")), ContactStore.open(storage).list())
     }
 
     @Test

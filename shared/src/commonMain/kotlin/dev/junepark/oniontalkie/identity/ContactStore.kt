@@ -1,10 +1,13 @@
 package dev.junepark.oniontalkie.identity
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -22,7 +25,8 @@ data class Contact(val onion: String, val clientAuthPub: String, val displayName
  * [republish] is the #7 integration seam: when [isOnline] is true it receives the complete current
  * authorization list after each key-set change, including removals. Offline publication must use
  * [list] when going online. Callbacks must not re-enter this store.
- * A publication failure propagates, but the contact remains saved and visible for a later retry.
+ * Publication-hook failures are logged without failing the saved operation; retry with [list] when
+ * going online. Coroutine cancellation still propagates after the durable state is committed.
  */
 class ContactStore private constructor(
     private val storage: Storage,
@@ -59,12 +63,25 @@ class ContactStore private constructor(
     private suspend fun save(next: List<Contact>) {
         val old = state.value
         if (old == next) return
-        storage.write("contacts.json", Json.encodeToString(next))
-        state.value = next.toList()
-        if (keys(old) != keys(next) && isOnline()) republish(keys(next).sorted())
+        // Storage can suspend even after replacing the file. Finish the commit before cancellation
+        // can release the mutex, so disk and the observable snapshot always agree.
+        withContext(NonCancellable) {
+            storage.write("contacts.json", json.encodeToString(next))
+            state.value = next.toList()
+        }
+        try {
+            if (keys(old) != keys(next) && isOnline()) republish(keys(next).sorted())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Do not log payloads or hook exception messages, which may contain identity material.
+            println("Contact change saved; authorization publication failed. Retry when going online.")
+        }
     }
 
     companion object {
+        private val json = Json { ignoreUnknownKeys = true }
+
         /** Loads validated JSON, merging duplicates by onion with the last entry winning. */
         suspend fun open(
             storage: Storage,
@@ -72,7 +89,7 @@ class ContactStore private constructor(
             republish: suspend (clientAuthPubs: List<String>) -> Unit = {},
         ): ContactStore {
             val text = storage.read("contacts.json")
-            val loaded = if (text == null) emptyList() else Json.decodeFromString<List<Contact>>(text)
+            val loaded = if (text == null) emptyList() else json.decodeFromString<List<Contact>>(text)
             val merged = loaded.map { it.copy(clientAuthPub = it.clientAuthPub.uppercase()) }
                 .associateBy { it.onion }.values.toList()
             return ContactStore(storage, merged, isOnline, republish)
