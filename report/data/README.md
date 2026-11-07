@@ -27,10 +27,33 @@ has no received-frame counter; partial intervals or paused playout must not be
 supplied under this assumption. Late frames are not added to this denominator.
 `circuit_id` and `hops` describe the circuit and are not averaged.
 
-MOS is labeled **simplified E-model (assumed Ie/Bpl)**. Ie=5 and Bpl=10.1 are
-assumptions for a wideband codec with PLC, not published Opus constants.
-The application configuration is Opus 24 kbps mono, 20 ms frames, no FEC.
-The simplified loss formula uses percentage points and assumes independent
-loss; one-way delay is RTT/2 plus buffer delay. See
-[ITU-T G.107](https://www.itu.int/rec/T-REC-G.107). These values are indicative,
-not a validated wideband or listening-test MOS measurement.
+MOS is labeled **simplified E-model (proxy/custom Ie/Bpl)**. Defaults are
+**Ie=10, Bpl=4.9**, a **proxy: G.722.2 23.85 kbps**, from
+[ITU-T G.113, *Transmission impairments due to speech processing* (2024),
+Appendix IV Table IV.4](https://www.itu.int/rec/T-REC-G.113-202409-I/en).
+That table gives paired provisional wideband planning values for diotic
+listening and uniform loss; they are not measured Opus constants. This nearby
+bitrate proxy is an explicit approximation for the app's Opus 24 kbps mono,
+20 ms frames, no FEC configuration, not an Opus calibration.
+
+Use `--ie` (finite, 0 to 95) and `--bpl` (finite, greater than zero) to override
+either parameter, for example when reproducing a codec study or evaluating
+sensitivity. Unspecified parameters retain their proxy defaults:
+
+```sh
+python3 -I tools/report_stats.py report/data/*/*.csv --out report/out/ --ie 10 --bpl 4.9
+```
+
+`table.md` records the selected values and whether each came from the proxy
+or a CLI override; each populated scenario in `summary.json` contains the same
+information under `mos_parameters` (`ie`, `bpl`, `ie_source`, `bpl_source`).
+The simplified [ITU-T G.107](https://www.itu.int/rec/T-REC-G.107) formula still
+uses loss in percentage points and RTT/2 plus buffer delay. It assumes
+independent random loss and does not implement the wideband R-scale calibration
+of G.107.1. Borrowing wideband planning factors does not validate that model:
+the estimate is indicative, not a measured or validated Opus/wideband MOS.
+
+Figures are 8 cm wide with 7 pt legend text and one entry per experiment:
+E1 (LAN loopback), E2 (same NAT via Tor), E3 (CGNAT via Tor). Lighter RTT
+lines show individual calls using the experiment's shared grayscale, line
+style, and marker; jitter CDFs pool calls within each experiment.
