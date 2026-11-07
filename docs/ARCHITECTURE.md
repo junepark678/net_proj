@@ -69,13 +69,20 @@ going online. Actual Tor publication awaits #7.
   UI reports "peer not online". No server, no polling service, no FCM.
 - `Socks5TorDialer(socksHost = "127.0.0.1", socksPort = 9050, timeoutMillis = 30_000).connect(onion, port)`
   (`jvmSharedMain`) implements `TorDialer`. It offers only SOCKS5 method 0x00 and sends the
-  `.onion` name as address type 0x03, so it is never resolved locally. Connect plus handshake
+  `.onion` name as address type 0x03, so it is never resolved locally. `socksHost` must be a
+  numeric IPv4 or IPv6 address, such as `127.0.0.1`, `::1`, or `[::1]`; hostnames (including
+  `localhost`), scoped IPv6 addresses, and malformed literals throw `IllegalArgumentException`
+  at construction without DNS resolution. IPv4 uses four decimal octets without leading zeros.
+  This keeps local DNS outside the dial path. Connect plus handshake
   must finish within the timeout (`DialResult.Timeout`). Results: `Connected(FrameChannel)`
   (Nagle disabled; use with `FrameReader`/`FrameWriter`), `PeerOffline` (Tor replies 0xF0, 0xF2,
   0xF3, 0xF7), `AuthRequired` (0xF4, 0xF5), `Timeout` (also reply 0x06), else
   `Error(code, message)` where `code` is the reply byte or a negative local code
   (`TorDialer.ERROR_*`). Tor sends the 0xF0..0xF7 codes only when the SocksPort has the
   `ExtendedErrors` flag; the Tor owner must configure it. Retries are the caller's concern (#16).
+  The established channel uses direct `SocketChannel` reads and complete-buffer writes so a
+  blocked read does not prevent concurrent writes on Android. Cancelling either direction
+  closes the channel.
 - Both sides may call simultaneously; the glare rule is: the side with the
   lexicographically smaller onion address keeps its outbound connection, the
   other side drops its own and accepts.

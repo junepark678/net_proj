@@ -1,7 +1,8 @@
 package dev.junepark.oniontalkie.tor
 
 import dev.junepark.oniontalkie.protocol.FrameChannel
-import java.net.Socket
+import java.nio.ByteBuffer
+import java.nio.channels.SocketChannel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -9,13 +10,12 @@ import kotlinx.coroutines.runInterruptible
 
 /**
  * [FrameChannel] over a connected TCP socket. Nagle is disabled here. Reads and writes may run
- * concurrently; each direction must be serialized by the caller. The socket must be channel-backed
- * (`SocketChannel.open().socket()`) so cancellation interrupts blocking I/O. Cancelling an
+ * concurrently; each direction must be serialized by the caller. Direct channel I/O avoids the
+ * shared blocking lock in Android's socket stream adapters. Cancelling an
  * in-flight read or write closes the connection, as the JDK closes an interrupted channel.
  */
-internal class SocketFrameChannel(private val socket: Socket) : FrameChannel {
-    private val input = socket.getInputStream()
-    private val output = socket.getOutputStream()
+internal class SocketFrameChannel(private val channel: SocketChannel) : FrameChannel {
+    private val socket get() = channel.socket()
 
     init { socket.tcpNoDelay = true }
 
@@ -23,15 +23,19 @@ internal class SocketFrameChannel(private val socket: Socket) : FrameChannel {
 
     override suspend fun read(destination: ByteArray, offset: Int, length: Int): Int {
         require(length > 0) { "Read length must be positive" }
-        return io { input.read(destination, offset, length) }
+        return io { channel.read(ByteBuffer.wrap(destination, offset, length)) }
     }
 
-    override suspend fun write(bytes: ByteArray) = io { output.write(bytes) }
+    override suspend fun write(bytes: ByteArray) = io {
+        val buffer = ByteBuffer.wrap(bytes)
+        while (buffer.hasRemaining()) channel.write(buffer)
+    }
 
-    override suspend fun flush() = io { output.flush() }
+    // Channel writes are unbuffered.
+    override suspend fun flush() { currentCoroutineContext().ensureActive() }
 
     /** Idempotent; closing an already closed socket is a no-op. */
-    override suspend fun close() { socket.close() }
+    override suspend fun close() { channel.close() }
 
     private suspend fun <T> io(block: () -> T): T = try {
         runInterruptible(Dispatchers.IO, block)

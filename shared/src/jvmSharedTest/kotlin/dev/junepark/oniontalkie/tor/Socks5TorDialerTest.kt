@@ -7,9 +7,11 @@ import java.net.ServerSocket
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 
 class Socks5TorDialerTest {
@@ -122,6 +124,39 @@ class Socks5TorDialerTest {
     @Test fun defaultsMatchTheSpecification() {
         assertEquals(9050, Socks5TorDialer.DEFAULT_SOCKS_PORT)
         assertEquals(30_000L, TorDialer.DEFAULT_TIMEOUT_MILLIS)
+    }
+
+    @Test fun proxyHostnamesAndMalformedLiteralsAreRejectedAtConstruction() {
+        for (host in listOf(
+            "localhost", "proxy.invalid", "127.0.0.1.invalid", "", "127.1", "256.0.0.1",
+            "127.00.0.1", "[127.0.0.1]", "1:2:3:4:5:6:7", "1:2:3:4:5:6:7:8:9",
+            "1::2::3", ":::1", "::gggg", "::ffff:256.0.0.1", "fe80::1%lo", "[::1",
+        )) {
+            assertFailsWith<IllegalArgumentException>(host) { Socks5TorDialer(socksHost = host) }
+        }
+    }
+
+    @Test fun numericProxyAddressesAreAccepted() {
+        for (host in listOf("127.0.0.1", "192.168.1.2", "::1", "[::1]", "::", "2001:db8::abcd",
+            "1:2:3:4:5:6:7:8", "::ffff:127.0.0.1", "0:0:0:0:0:ffff:127.0.0.1")) {
+            Socks5TorDialer(socksHost = host)
+        }
+    }
+
+    @Test fun callerTimeoutRemainsCancellation() = run {
+        val server = FakeSocks5Server { s ->
+            s.readExactly(3)
+            // Cancellation closes the channel rather than waiting for a handshake reply.
+            assertEquals(-1, s.input.read())
+        }
+        server.use {
+            assertFailsWith<TimeoutCancellationException> {
+                withTimeout(500) {
+                    Socks5TorDialer(socksPort = server.port, timeoutMillis = 10_000).connect(onion, 1)
+                }
+            }
+            server.awaitScript()
+        }
     }
 
     @Test fun invalidArgumentsFailWithoutConnecting() = run {
