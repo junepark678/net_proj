@@ -103,6 +103,50 @@ reads are allowed, writes consume a whole buffer, and flush/close are explicit.
 flushes per frame. Callers serialize reads and writes independently; the transport
 adapter is responsible for disabling TCP Nagle.
 
+## Call engine
+
+`call.CallEngine` (in `shared`'s `call` package, pure common Kotlin) is the explicit,
+suspendable state machine behind the UI. `engine.state` is a `StateFlow<CallState>`:
+
+```
+Offline ─goOnline→ GoingOnline ─→ Online ─dial→ Dialing ─ACCEPT→ InCall ─end→ Online
+   ↑                    │            │              ├─ descriptor/rendezvous failure → PeerOffline
+   └──────goOffline─────┴────────────┘              └─ declined / busy / 10 s / error → Online(lastCall)
+                                     └─inbound HELLO→ Ringing ─accept()→ InCall
+```
+
+Compose calls the non-suspending commands `goOnline`, `goOffline`, `dial(onion)`, `accept`,
+`decline`, `hangUp` and `dismiss`; a command that is invalid in the current state is ignored.
+`PeerOffline` is a distinct state that otherwise behaves like `Online`;
+`Online.lastCall` records why the previous attempt ended (`EndReason`).
+
+Rules: one session at a time, any other inbound stream gets BYE(BUSY); a dial writes HELLO and
+waits 10 s for ACCEPT; an inbound HELLO while idle rings for 30 s; PING goes out immediately and
+then every 2 s and the peer's PINGs are answered with PONG; 15 s without a PONG or AUDIO ends the
+call with `TIMEOUT` (a peer PING alone is not liveness). Glare: HELLO carries no onion, so an
+inbound HELLO while dialing is taken to be the callee (a listener that can identify the caller may
+say otherwise via `IncomingConnection.peerOnion`). The side whose normalized onion is smaller keeps
+its outbound stream and answers the inbound one with BYE(GLARE); the larger side sends BYE(GLARE) on
+its outbound stream, closes it and accepts the inbound one without ringing. A larger side that
+receives BYE(GLARE) first waits (10 s) for the peer's own call to arrive.
+
+The engine depends on four small interfaces in `CallContracts.kt`, each adapting one open
+issue without importing it: `PresenceService`/`ListeningService` (#7 publishes the onion service and
+yields accepted streams), `CallDialer` (#8's `TorDialer`, whose `DialResult` maps one-to-one onto
+`DialOutcome`), and `CallMedia`/`MediaLink` (#15 runs capture/playout between ACCEPT and teardown
+and gets received AUDIO plus `sendAudio`). The engine owns the handshake, keepalives and BYE; the
+media never sees them. All streams are `protocol.FrameChannel`s read with `FrameReader` and written
+with `FrameWriter`.
+
+Concurrency: a single loop coroutine handles commands, accepted streams, dial results, frames and
+timers as events tagged with the stream they belong to, so events for a stream that is already
+gone are ignored. Teardown changes state first and then, on a detached closer scope, writes a
+bounded BYE and closes the transport. `Connection` guarantees `FrameChannel.close()` runs exactly
+once however teardown is triggered (hang-up, timeout, BYE, EOF, `FrameReader` error, `goOffline`,
+`close()` or cancelling the engine's scope). The cancellation contract for dialers and presence
+adapters is documented on the interfaces: a cancelled `connect` must close a stream it already
+obtained.
+
 ## Audio path
 
 ```
@@ -145,7 +189,8 @@ t_s,rtt_ms,jitter_ms,loss_pct,late,plc,buffer_ms,tx_kbps,rx_kbps,circuit_id,hops
 for the live screen. The call owner creates one logger with a `FileMetricsSink`
 and a coroutine scope on an I/O dispatcher, then feeds it transport and playout
 events. The transport, jitter buffer and Tor control integrations are owned by
-their respective issues; no call engine exists in the scaffold yet.
+their respective issues; the call engine above does not feed the logger yet, that
+wiring belongs with the media pipeline (#15).
 
 ```kotlin
 val files = FileMetricsSink(appData, startedAtIso, peerShort)
