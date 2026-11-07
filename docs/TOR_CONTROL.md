@@ -92,6 +92,18 @@ Protocol references: [message framing](https://spec.torproject.org/control-spec/
 [commands](https://spec.torproject.org/control-spec/commands.html), and
 [replies and events](https://spec.torproject.org/control-spec/replies.html).
 
+## Onion service integration test
+
+`OnionServiceTorTest` (desktop) publishes with client authorization, waits for the
+`HS_DESC UPLOADED` event, and issues `DEL_ONION`. It is skipped unless
+`TOR_CONTROL_SMOKE_BINARY` (isolated Tor, needs the public network) or
+`TOR_CONTROL_PORT` plus `TOR_CONTROL_COOKIE_FILE` (a running Tor you own) is set:
+
+```sh
+ANDROID_HOME="$ANDROID_HOME" TOR_CONTROL_SMOKE_BINARY=/path/to/tor \
+  ./gradlew :shared:desktopTest --tests '*OnionServiceTorTest' --rerun-tasks
+```
+
 ## Verification
 
 No Tor or network access is needed for the transcript tests, SHA-256 and
