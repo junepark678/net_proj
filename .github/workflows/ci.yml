@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   push:
 
 concurrency:
@@ -57,6 +58,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-debug-apk
+          if-no-files-found: error
           path: androidApp/build/outputs/apk/debug/*.apk
 
   desktop:
@@ -70,13 +72,14 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
-      - name: Package desktop app
-        run: ./gradlew --no-daemon :desktopApp:packageDistributionForCurrentOS
-      - name: Upload desktop package
+      - name: Build desktop distributable
+        run: ./gradlew --no-daemon :desktopApp:createDistributable
+      - name: Upload desktop distributable
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-package
-          path: desktopApp/build/compose/binaries/main/**
+          name: desktop-distributable
+          if-no-files-found: error
+          path: desktopApp/build/compose/binaries/main/app/**
 
   qualify-emulator:
     if: contains(github.event.pull_request.labels.*.name, 'qualify:emulator')
