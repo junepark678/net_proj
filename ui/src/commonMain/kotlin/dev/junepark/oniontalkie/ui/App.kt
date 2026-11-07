@@ -1,6 +1,7 @@
 package dev.junepark.oniontalkie.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,7 +29,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -95,6 +101,11 @@ fun App(controller: OnionDialController) {
             if (onion != null && pairing != null) {
                 Panel(title = if (korean) "내 주소" else "Your address") {
                     BasicText(onion.orEmpty(), style = bodyStyle())
+                    Spacer(Modifier.height(8.dp))
+                    PairingQrCode(
+                        text = pairing.orEmpty(),
+                        description = if (korean) "페어링 QR 코드" else "Pairing QR code",
+                    )
                     Spacer(Modifier.height(8.dp))
                     BasicText(
                         text = pairing.orEmpty(),
@@ -223,6 +234,30 @@ fun App(controller: OnionDialController) {
             }
             if (feedback.isNotBlank()) BasicText(feedback, style = TextStyle(color = Color(0xFFB8B4C2), fontSize = 13.sp))
             Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun PairingQrCode(text: String, description: String) {
+    val matrix = remember(text) { pairingQrMatrix(text) }
+    Canvas(
+        modifier = Modifier.size(220.dp)
+            .background(Color.White, RoundedCornerShape(8.dp))
+            .semantics { contentDescription = description },
+    ) {
+        val moduleSize = size.width / matrix.size
+        drawRect(Color.White)
+        for (row in 0 until matrix.size) {
+            for (column in 0 until matrix.size) {
+                if (matrix.darkModules[row * matrix.size + column]) {
+                    drawRect(
+                        color = Color.Black,
+                        topLeft = Offset(column * moduleSize, row * moduleSize),
+                        size = Size(moduleSize, moduleSize),
+                    )
+                }
+            }
         }
     }
 }
