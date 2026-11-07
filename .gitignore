@@ -1,0 +1,24 @@
+# Gradle / Kotlin
+.gradle/
+build/
+**/build/
+.kotlin/
+*.class
+local.properties
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store
+# Android
+*.apk
+*.aab
+*.ap_
+captures/
+# Tor runtime state (never commit keys or data dirs)
+tor-data/
+**/hs_ed25519_secret_key
+# Report build outputs
+report/out/
+# Misc
+*.log
