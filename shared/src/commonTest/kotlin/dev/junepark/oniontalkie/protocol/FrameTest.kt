@@ -9,6 +9,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class FrameTest {
@@ -20,6 +21,9 @@ class FrameTest {
         Frame.Pong(0x01020304u, 0xFEDCBA98u),
         Frame.Bye(ByeReason.NORMAL),
         Frame.Bye(ByeReason.VERSION),
+        Frame.Bye(ByeReason.BUSY),
+        Frame.Bye(ByeReason.GLARE),
+        Frame.Bye(ByeReason.PROTOCOL_ERROR),
     )
 
     @Test
@@ -32,7 +36,11 @@ class FrameTest {
             "05 01 02 03 04 FE DC BA 98",
             "06 00",
             "06 01",
+            "06 02",
+            "06 03",
+            "06 04",
         )
+        assertEquals(frames.size, vectors.size)
         frames.zip(vectors).forEach { (frame, vector) ->
             val bytes = vector.split(' ').map { it.toInt(16).toByte() }.toByteArray()
             assertContentEquals(bytes, FrameCodec.encode(frame))
@@ -44,16 +52,39 @@ class FrameTest {
     fun tenThousandRandomFramesRoundTrip() {
         val random = Random(14)
         repeat(10000) {
-            val frame = when (random.nextInt(6)) {
-                0 -> Frame.Hello(random.nextInt(256).toUByte(), randomName(random), random.nextInt().toUInt())
-                1 -> Frame.Accept(random.nextInt(256).toUByte())
-                2 -> Frame.Audio(random.nextInt(65536).toUShort(), random.nextInt().toUInt(),
-                    random.nextBytes(random.nextInt(FrameCodec.MAX_AUDIO_BYTES + 1)))
-                3 -> Frame.Ping(random.nextInt().toUInt())
-                4 -> Frame.Pong(random.nextInt().toUInt(), random.nextInt().toUInt())
-                else -> Frame.Bye(ByeReason.entries[random.nextInt(ByeReason.entries.size)])
-            }
+            val frame = randomFrame(random)
             assertEquals(frame, FrameCodec.decode(FrameCodec.encode(frame)))
+        }
+    }
+
+    @Test
+    fun tenThousandMutatedValidFramesOnlyProduceTypedErrors() {
+        val random = Random(0xF023)
+        val boundaryFrames = frames + listOf(
+            Frame.Hello(1u, "", 0u),
+            Frame.Hello(1u, "🎙".repeat(64), UInt.MAX_VALUE),
+            Frame.Audio(0u, 0u, ByteArray(0)),
+            Frame.Audio(UShort.MAX_VALUE, UInt.MAX_VALUE, ByteArray(1275)),
+        )
+        repeat(10000) { iteration ->
+            val frame = if (iteration % 2 == 0) boundaryFrames[(iteration / 2) % boundaryFrames.size]
+                else randomFrame(random)
+            val bytes = FrameCodec.encode(frame)
+            val mutated = when (iteration % 3) {
+                0 -> bytes.copyOf().also {
+                    val index = random.nextInt(it.size)
+                    it[index] = (it[index].toInt() xor random.nextInt(1, 256)).toByte()
+                }
+                1 -> bytes.copyOf(random.nextInt(bytes.size))
+                else -> bytes + random.nextBytes(random.nextInt(1, 4))
+            }
+            try {
+                val decoded = FrameCodec.decode(mutated)
+                assertContentEquals(mutated, FrameCodec.encode(decoded))
+                assertEquals(decoded, FrameCodec.decode(FrameCodec.encode(decoded)))
+            } catch (_: ProtocolException) {
+                // Any unexpected exception fails the test.
+            }
         }
     }
 
@@ -81,12 +112,19 @@ class FrameTest {
         assertProtocol(ProtocolException.Error.INVALID_LENGTH) {
             FrameCodec.encode(Frame.Audio(0u, 0u, ByteArray(1276)))
         }
-        val maxName = Frame.Hello(1u, "a".repeat(65535), UInt.MAX_VALUE)
-        assertEquals(maxName, FrameCodec.decode(FrameCodec.encode(maxName)))
+        for (name in listOf("a".repeat(256), "🎙".repeat(64), "한".repeat(85) + "a")) {
+            val maxName = Frame.Hello(1u, name, UInt.MAX_VALUE)
+            assertEquals(maxName, FrameCodec.decode(FrameCodec.encode(maxName)))
+        }
         val emptyName = Frame.Hello(1u, "", 0u)
         assertEquals(emptyName, FrameCodec.decode(FrameCodec.encode(emptyName)))
-        for (name in listOf("a".repeat(65536), "한".repeat(21846))) {
+        for (name in listOf("a".repeat(257), "🎙".repeat(64) + "a", "한".repeat(86))) {
             assertProtocol(ProtocolException.Error.INVALID_LENGTH) { FrameCodec.encode(Frame.Hello(1u, name, 0u)) }
+            val nameBytes = name.encodeToByteArray()
+            val bytes = byteArrayOf(1, 1, (nameBytes.size shr 8).toByte(), nameBytes.size.toByte()) +
+                nameBytes + ByteArray(4)
+            assertProtocol(ProtocolException.Error.INVALID_LENGTH) { FrameCodec.decode(bytes) }
+            assertProtocol(ProtocolException.Error.INVALID_LENGTH) { FrameCodec.decode(bytes.copyOf(4)) }
         }
     }
 
@@ -155,7 +193,10 @@ class FrameTest {
                 val error = assertFailsWith<ProtocolException> { reader.read() }
                 assertEquals(ProtocolException.Error.TRUNCATED, error.error)
                 assertEquals(1, channel.closes)
-                assertNull(reader.read())
+                val reads = channel.reads
+                repeat(3) { assertSame(error, assertFailsWith<ProtocolException> { reader.read() }) }
+                assertEquals(reads, channel.reads)
+                assertEquals(1, channel.closes)
             }
         }
         assertNull(FrameReader(MemoryChannel(ByteArray(0))).read())
@@ -172,11 +213,29 @@ class FrameTest {
     }
 
     @Test
+    fun oversizedNameIsRejectedBeforePayloadIsRead() = runSuspending {
+        for (length in listOf(257, 65535)) {
+            val bytes = byteArrayOf(1, 1, (length shr 8).toByte(), length.toByte()) + ByteArray(length + 4)
+            val channel = MemoryChannel(bytes, maxChunk = 1)
+            val reader = FrameReader(channel)
+            val error = assertFailsWith<ProtocolException> { reader.read() }
+            assertEquals(ProtocolException.Error.INVALID_LENGTH, error.error)
+            assertEquals(4, channel.position)
+            assertSame(error, assertFailsWith<ProtocolException> { reader.read() })
+            assertEquals(1, channel.closes)
+        }
+    }
+
+    @Test
     fun malformedInputClosesWithoutSendingBye() = runSuspending {
-        val cases = listOf(byteArrayOf(7), byteArrayOf(6, 2), byteArrayOf(1, 1, 0, 1, -1, 0, 0, 0, 0))
+        val cases = listOf(byteArrayOf(7), byteArrayOf(6, 5), byteArrayOf(1, 1, 0, 1, -1, 0, 0, 0, 0))
         for (bytes in cases) {
             val channel = MemoryChannel(bytes)
-            assertFailsWith<ProtocolException> { FrameReader(channel).read() }
+            val reader = FrameReader(channel)
+            val error = assertFailsWith<ProtocolException> { reader.read() }
+            val reads = channel.reads
+            repeat(3) { assertSame(error, assertFailsWith<ProtocolException> { reader.read() }) }
+            assertEquals(reads, channel.reads)
             assertEquals(1, channel.closes)
             assertTrue(channel.writes.isEmpty())
         }
@@ -191,8 +250,62 @@ class FrameTest {
             assertEquals(ProtocolException.Error.VERSION, error.error)
             assertContentEquals(byteArrayOf(6, 1), channel.writes.single())
             assertEquals(listOf("write", "flush", "close"), channel.events)
-            assertNull(reader.read())
+            assertSame(error, assertFailsWith<ProtocolException> { reader.read() })
+            assertEquals(2, channel.position)
         }
+    }
+
+    @Test
+    fun unsupportedHelloVersionTakesPriorityOverMalformedBody() = runSuspending {
+        for (version in listOf(0, 2, 255)) {
+            val bodies = listOf(
+                byteArrayOf(),
+                byteArrayOf(0),
+                byteArrayOf(0, 1),
+                byteArrayOf(0, 1, -1, 0, 0, 0, 0),
+                byteArrayOf(-1, -1),
+            )
+            for (body in bodies) {
+                val bytes = byteArrayOf(1, version.toByte()) + body
+                assertProtocol(ProtocolException.Error.VERSION) { FrameCodec.decode(bytes) }
+                val channel = MemoryChannel(bytes, maxChunk = 1)
+                val reader = FrameReader(channel)
+                val error = assertFailsWith<ProtocolException> { reader.read() }
+                assertEquals(ProtocolException.Error.VERSION, error.error)
+                assertEquals(2, channel.position)
+                assertContentEquals(byteArrayOf(6, 1), channel.writes.single())
+                assertEquals(listOf("write", "flush", "close"), channel.events)
+                repeat(3) { assertSame(error, assertFailsWith<ProtocolException> { reader.read() }) }
+                assertEquals(2, channel.reads)
+                assertEquals(1, channel.closes)
+            }
+        }
+    }
+
+    @Test
+    fun unsupportedAcceptVersionIsRejected() = runSuspending {
+        for (version in listOf(0, 2, 255)) {
+            val bytes = byteArrayOf(2, version.toByte())
+            assertProtocol(ProtocolException.Error.VERSION) { FrameCodec.decode(bytes) }
+            val channel = MemoryChannel(bytes)
+            val reader = FrameReader(channel)
+            val error = assertFailsWith<ProtocolException> { reader.read() }
+            assertEquals(ProtocolException.Error.VERSION, error.error)
+            assertSame(error, assertFailsWith<ProtocolException> { reader.read() })
+            assertEquals(1, channel.closes)
+            assertTrue(channel.writes.isEmpty())
+        }
+    }
+
+    @Test
+    fun transportReadFailuresAreLatched() = runSuspending {
+        val failure = IllegalStateException("transport read failed")
+        val channel = MemoryChannel(byteArrayOf(4), readFailure = failure)
+        val reader = FrameReader(channel)
+        repeat(3) { assertSame(failure, assertFailsWith<IllegalStateException> { reader.read() }) }
+        assertEquals(2, channel.reads)
+        assertEquals(1, channel.position)
+        assertEquals(1, channel.closes)
     }
 
     @Test
@@ -206,7 +319,7 @@ class FrameTest {
 
     @Test
     fun readerHandlesMaximumNameAndAudio() = runSuspending {
-        for (frame in listOf(Frame.Hello(1u, "a".repeat(65535), 24000u), Frame.Audio(0u, 0u, ByteArray(1275)))) {
+        for (frame in listOf(Frame.Hello(1u, "🎙".repeat(64), 24000u), Frame.Audio(0u, 0u, ByteArray(1275)))) {
             assertEquals(frame, FrameReader(MemoryChannel(FrameCodec.encode(frame), maxChunk = 3)).read())
         }
     }
@@ -240,6 +353,16 @@ class FrameTest {
         }
     }
 
+    private fun randomFrame(random: Random): Frame = when (random.nextInt(6)) {
+        0 -> Frame.Hello(FrameCodec.VERSION, randomName(random), random.nextInt().toUInt())
+        1 -> Frame.Accept(FrameCodec.VERSION)
+        2 -> Frame.Audio(random.nextInt(65536).toUShort(), random.nextInt().toUInt(),
+            random.nextBytes(random.nextInt(FrameCodec.MAX_AUDIO_BYTES + 1)))
+        3 -> Frame.Ping(random.nextInt().toUInt())
+        4 -> Frame.Pong(random.nextInt().toUInt(), random.nextInt().toUInt())
+        else -> Frame.Bye(ByeReason.entries[random.nextInt(ByeReason.entries.size)])
+    }
+
     private fun randomName(random: Random): String = buildString {
         repeat(random.nextInt(40)) { append(listOf("a", "\u0000", "한", "🎙", "é")[random.nextInt(5)]) }
     }
@@ -264,6 +387,7 @@ class FrameTest {
         private val chunks: List<Int> = emptyList(),
         private val failWrite: Boolean = false,
         private val failClose: Boolean = false,
+        private val readFailure: Exception? = null,
     ) : FrameChannel {
         var position = 0
         var reads = 0
@@ -275,6 +399,7 @@ class FrameTest {
 
         override suspend fun read(destination: ByteArray, offset: Int, length: Int): Int {
             reads++
+            if (reads > 1) readFailure?.let { throw it }
             if (position == input.size) return -1
             if (chunkRemaining == 0) chunkRemaining = chunks.getOrNull(nextChunk++) ?: maxChunk
             val count = minOf(chunkRemaining, length, input.size - position)

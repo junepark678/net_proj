@@ -25,11 +25,14 @@ class FrameWriter(private val channel: FrameChannel) {
  * Reads one frame without consuming the next. Calls must be serialized by the caller.
  * Clean EOF between frames returns null. Malformed/truncated input closes the channel and throws
  * [ProtocolException]. An unsupported HELLO sends and flushes BYE(VERSION) before closing.
+ * Any read failure is latched and rethrown on subsequent reads, including transport failures.
  */
 class FrameReader(private val channel: FrameChannel) {
     private var ended = false
+    private var failure: Exception? = null
 
     suspend fun read(): Frame? {
+        failure?.let { throw it }
         if (ended) return null
         try {
             val type = ByteArray(1)
@@ -39,23 +42,31 @@ class FrameReader(private val channel: FrameChannel) {
             }
             val header = ByteArray(FrameCodec.headerSize(type[0]))
             header[0] = type[0]
-            readFully(header, 1, header.size - 1)
+            val headerOffset = if (type[0].toInt() == 1 || type[0].toInt() == 2) {
+                readFully(header, 1, 1)
+                try {
+                    FrameCodec.checkVersion(header[1].toUByte())
+                } catch (error: ProtocolException) {
+                    if (type[0].toInt() == 1) {
+                        try {
+                            FrameWriter(channel).write(Frame.Bye(ByeReason.VERSION))
+                        } catch (failure: Exception) {
+                            error.addSuppressed(failure)
+                        }
+                    }
+                    throw error
+                }
+                2
+            } else {
+                1
+            }
+            readFully(header, headerOffset, header.size - headerOffset)
             // Validate declared length before allocating or reading the payload.
             val bytes = header.copyOf(FrameCodec.frameSize(header))
             readFully(bytes, header.size, bytes.size - header.size)
-            val frame = FrameCodec.decode(bytes)
-            if (frame is Frame.Hello && frame.version != FrameCodec.VERSION) {
-                val error = ProtocolException(ProtocolException.Error.VERSION, "Unsupported HELLO version ${frame.version}")
-                try {
-                    FrameWriter(channel).write(Frame.Bye(ByeReason.VERSION))
-                } catch (failure: Exception) {
-                    error.addSuppressed(failure)
-                }
-                throw error
-            }
-            return frame
-        } catch (error: ProtocolException) {
-            ended = true
+            return FrameCodec.decode(bytes)
+        } catch (error: Exception) {
+            failure = error
             try {
                 channel.close()
             } catch (failure: Exception) {

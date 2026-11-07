@@ -19,9 +19,12 @@ sealed class Frame {
 enum class ByeReason(val code: UByte) {
     NORMAL(0u),
     VERSION(1u),
+    BUSY(2u),
+    GLARE(3u),
+    PROTOCOL_ERROR(4u),
 }
 
-/** A malformed wire value or unsupported HELLO version; transport failures remain transport errors. */
+/** A malformed wire value or unsupported protocol version; transport failures remain transport errors. */
 class ProtocolException(val error: Error, message: String) : Exception(message) {
     enum class Error { UNKNOWN_TYPE, INVALID_LENGTH, INVALID_UTF8, UNKNOWN_REASON, TRUNCATED, TRAILING_DATA, VERSION }
 }
@@ -30,7 +33,7 @@ class ProtocolException(val error: Error, message: String) : Exception(message) 
 object FrameCodec {
     const val VERSION: UByte = 1u
     const val MAX_AUDIO_BYTES: Int = 1275
-    const val MAX_NAME_BYTES: Int = 65535
+    const val MAX_NAME_BYTES: Int = 256
 
     fun encode(frame: Frame): ByteArray = when (frame) {
         is Frame.Hello -> {
@@ -41,7 +44,7 @@ object FrameCodec {
             } catch (_: CharacterCodingException) {
                 throw ProtocolException(ProtocolException.Error.INVALID_UTF8, "Invalid display name")
             }
-            checkLength(name.size <= MAX_NAME_BYTES, "Display name exceeds u16 byte length")
+            checkLength(name.size <= MAX_NAME_BYTES, "Display name exceeds $MAX_NAME_BYTES UTF-8 bytes")
             ByteArray(8 + name.size).apply {
                 this[0] = 1
                 this[1] = frame.version.toByte()
@@ -70,10 +73,13 @@ object FrameCodec {
         is Frame.Bye -> byteArrayOf(6, frame.reason.code.toByte())
     }
 
-    /** Unsupported versions remain representable here; [FrameReader] performs negotiation. */
+    /** Rejects unsupported HELLO/ACCEPT versions before checking the remainder of the frame. */
     fun decode(bytes: ByteArray): Frame {
         if (bytes.isEmpty()) truncated()
         val headerSize = headerSize(bytes[0])
+        if ((bytes[0].toInt() == 1 || bytes[0].toInt() == 2) && bytes.size >= 2) {
+            checkVersion(bytes[1].toUByte())
+        }
         if (bytes.size < headerSize) truncated()
         val size = frameSize(bytes)
         if (bytes.size < size) truncated()
@@ -107,7 +113,11 @@ object FrameCodec {
     }
 
     internal fun frameSize(header: ByteArray): Int = when (header[0].toInt()) {
-        1 -> 8 + header.uint(2, 2).toInt()
+        1 -> {
+            val length = header.uint(2, 2).toInt()
+            checkLength(length <= MAX_NAME_BYTES, "Display name exceeds $MAX_NAME_BYTES UTF-8 bytes")
+            8 + length
+        }
         3 -> {
             val length = header.uint(7, 2).toInt()
             checkLength(length <= MAX_AUDIO_BYTES, "AUDIO exceeds $MAX_AUDIO_BYTES bytes")
@@ -118,6 +128,12 @@ object FrameCodec {
 
     private fun checkLength(valid: Boolean, message: String) {
         if (!valid) throw ProtocolException(ProtocolException.Error.INVALID_LENGTH, message)
+    }
+
+    internal fun checkVersion(version: UByte) {
+        if (version != VERSION) {
+            throw ProtocolException(ProtocolException.Error.VERSION, "Unsupported protocol version $version")
+        }
     }
 
     internal fun truncated(): Nothing = throw ProtocolException(ProtocolException.Error.TRUNCATED, "Truncated frame")
