@@ -142,7 +142,14 @@ private class LocalTcpCallListener private constructor(
     suspend fun accept(): IncomingCall {
         while (true) {
             currentCoroutineContext().ensureActive()
-            val socket = runInterruptible(Dispatchers.IO) { server.accept() }
+            val socket = try {
+                runInterruptible(Dispatchers.IO) { server.accept() }
+            } catch (failure: Exception) {
+                // Closing the server to cancel a blocking accept can surface as
+                // ClosedByInterruptException. Preserve coroutine cancellation semantics.
+                currentCoroutineContext().ensureActive()
+                throw failure
+            }
             pending.add(socket)
             var delivered = false
             try {

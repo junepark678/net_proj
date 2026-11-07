@@ -34,7 +34,7 @@ classic relays (TURN).
 | Codec | Common `OpusCodec` API; Concentus (pure JVM port) in `jvmSharedMain` |
 | Transport | Tor: `tor-android` AAR (Android), Tor Expert Bundle (desktop); driven over the control port from common code |
 | Audio I/O | `expect`/`actual`: AudioRecord/AudioTrack (Android), `javax.sound.sampled` (desktop) |
-| CI | GitHub Actions: JVM unit tests, Android build, AOSP emulator instrumentation tests, desktop smoke test |
+| CI | GitHub Actions: JVM unit tests, Android build, AOSP emulator instrumentation tests, desktop distribution build |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module layout and
 protocol, and [docs/REPORT_PLAN.md](docs/REPORT_PLAN.md) for the report
@@ -115,6 +115,11 @@ The desktop application and bundled runtime are written to
 distribution stages a SHA-256-verified Tor Expert Bundle for the build host;
 ordinary compile tasks do not download it. Builds enable configuration cache
 and parallel execution; rerunning a command reuses the configuration cache.
+When `JAVA_HOME_17_X64` is available, the desktop package uses that JDK for its
+launcher and bundled runtime while Gradle continues to run on JDK 21. On other
+hosts, select a packaging JDK explicitly with
+`-PonionDialJpackageJavaHome=/path/to/jdk` if the default launcher is not
+compatible with the host.
 
 ## License
 

@@ -80,7 +80,8 @@ def main():
     groups = {s: [] for s in SCENARIOS}
     for fn in args.csvs:
         path = Path(fn)
-        if path.parent.name not in groups:
+        scenario = next((parent.name for parent in path.parents if parent.name in groups), None)
+        if scenario is None:
             print(f'Warning: unsupported scenario path {path}; skipped', file=sys.stderr)
             continue
         with path.open(newline='') as f:
@@ -89,7 +90,7 @@ def main():
                 ap.error(f'{path}: unexpected CSV header')
             rows = list(reader)
         if rows:
-            groups[path.parent.name].append((path.stem, rows))
+            groups[scenario].append((path.stem, rows))
     if not any(groups.values()):
         ap.error('zero usable rows in supported scenario paths')
 

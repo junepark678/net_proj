@@ -2,20 +2,30 @@ package dev.junepark.oniontalkie.desktop
 
 import dev.junepark.oniontalkie.call.CallState
 import dev.junepark.oniontalkie.call.JvmOnionCallRuntime
+import dev.junepark.oniontalkie.audio.DesktopAudioDevices
+import dev.junepark.oniontalkie.audio.DesktopAudioInput
+import dev.junepark.oniontalkie.audio.DesktopAudioOutput
 import dev.junepark.oniontalkie.identity.Contact
 import dev.junepark.oniontalkie.identity.appDataDir
 import dev.junepark.oniontalkie.identity.PairingResult
 import dev.junepark.oniontalkie.metrics.CallStats
+import dev.junepark.oniontalkie.metrics.CallHistoryEntry
+import dev.junepark.oniontalkie.metrics.loadCallHistory
 import dev.junepark.oniontalkie.tor.JvmControlTransport
 import dev.junepark.oniontalkie.tor.TorConfig
 import dev.junepark.oniontalkie.tor.TorControl
 import dev.junepark.oniontalkie.tor.TorProcess
-import dev.junepark.oniontalkie.ui.OnionDialController
+import dev.junepark.oniontalkie.ui.OnionDialViewModel
 import dev.junepark.oniontalkie.ui.AppPresenceState
+import dev.junepark.oniontalkie.ui.AudioDeviceOption
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.awt.Desktop
 import java.io.File
+import java.util.prefs.Preferences
+import java.nio.file.StandardCopyOption
+import java.util.Locale
+import javax.swing.JFileChooser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,9 +39,23 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
-class DesktopTorController : OnionDialController, AutoCloseable {
+class DesktopTorController : OnionDialViewModel, AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val preferences = Preferences.userNodeForPackage(DesktopTorController::class.java)
+    override val audioInputs: List<AudioDeviceOption> = runCatching { DesktopAudioDevices.listInputs() }
+        .getOrDefault(emptyList())
+        .map { AudioDeviceOption(it.name, listOf(it.name, it.vendor).filter(String::isNotBlank).distinct().joinToString(" · ")) }
+    override val audioOutputs: List<AudioDeviceOption> = runCatching { DesktopAudioDevices.listOutputs() }
+        .getOrDefault(emptyList())
+        .map { AudioDeviceOption(it.name, listOf(it.name, it.vendor).filter(String::isNotBlank).distinct().joinToString(" · ")) }
+    private val mutableSelectedAudioInput = MutableStateFlow(preferences.get("audioInput", null).takeIf { id ->
+        audioInputs.any { it.id == id }
+    })
+    private val mutableSelectedAudioOutput = MutableStateFlow(preferences.get("audioOutput", null).takeIf { id ->
+        audioOutputs.any { it.id == id }
+    })
     private val mutableState = MutableStateFlow<AppPresenceState>(AppPresenceState.Offline)
     private var lifecycleJob: Job? = null
     private var process: TorProcess? = null
@@ -43,7 +67,14 @@ class DesktopTorController : OnionDialController, AutoCloseable {
     private val mutablePairingText = MutableStateFlow<String?>(null)
     private val mutableMetricsStats = MutableStateFlow<CallStats?>(null)
     private val mutableMetricsCsvPath = MutableStateFlow<String?>(null)
+    private val mutableCallHistory = MutableStateFlow<List<CallHistoryEntry>>(emptyList())
+    private val mutableMuted = MutableStateFlow(false)
+    private val mutableSpeakerphoneSelected = MutableStateFlow(false)
     private val runtimeJobs = mutableListOf<Job>()
+
+    init {
+        scope.launch { refreshCallHistory() }
+    }
 
     override val state: StateFlow<AppPresenceState> = mutableState.asStateFlow()
     override val callState: StateFlow<CallState> = mutableCallState.asStateFlow()
@@ -52,6 +83,12 @@ class DesktopTorController : OnionDialController, AutoCloseable {
     override val pairingText: StateFlow<String?> = mutablePairingText.asStateFlow()
     override val metricsStats: StateFlow<CallStats?> = mutableMetricsStats.asStateFlow()
     override val metricsCsvPath: StateFlow<String?> = mutableMetricsCsvPath.asStateFlow()
+    override val callHistory: StateFlow<List<CallHistoryEntry>> = mutableCallHistory.asStateFlow()
+    override val muted: StateFlow<Boolean> = mutableMuted.asStateFlow()
+    override val speakerphoneSelected: StateFlow<Boolean> = mutableSpeakerphoneSelected.asStateFlow()
+    override val supportsSpeakerphone: Boolean = false
+    override val selectedAudioInput: StateFlow<String?> = mutableSelectedAudioInput.asStateFlow()
+    override val selectedAudioOutput: StateFlow<String?> = mutableSelectedAudioOutput.asStateFlow()
 
     override fun startTor() {
         if (lifecycleJob?.isActive == true) return
@@ -88,6 +125,8 @@ class DesktopTorController : OnionDialController, AutoCloseable {
                         dataDirectory = config.dataDir,
                         displayName = System.getProperty("user.name")?.takeIf { it.isNotBlank() } ?: "Onion Dial",
                         scope = scope,
+                        inputFactory = { DesktopAudioInput(mutableSelectedAudioInput.value) },
+                        outputFactory = { DesktopAudioOutput(mutableSelectedAudioOutput.value) },
                     )
                     callRuntime = runtime
                     runtimeJobs += scope.launch { runtime.callState.collect { mutableCallState.value = it } }
@@ -96,6 +135,11 @@ class DesktopTorController : OnionDialController, AutoCloseable {
                     runtimeJobs += scope.launch { runtime.pairingText.collect { mutablePairingText.value = it } }
                     runtimeJobs += scope.launch { runtime.metricsStats.collect { mutableMetricsStats.value = it } }
                     runtimeJobs += scope.launch { runtime.metricsCsvPath.collect { mutableMetricsCsvPath.value = it } }
+                    runtimeJobs += scope.launch { runtime.muted.collect { mutableMuted.value = it } }
+                    runtimeJobs += scope.launch {
+                        runtime.speakerphoneSelected.collect { mutableSpeakerphoneSelected.value = it }
+                    }
+                    runtimeJobs += scope.launch { runtime.callHistory.collect { mutableCallHistory.value = it } }
                     runtime.goOnline()
                     mutableState.value = AppPresenceState.TorReady
                 } else if (progress < BOOTSTRAP_COMPLETE) {
@@ -126,6 +170,8 @@ class DesktopTorController : OnionDialController, AutoCloseable {
         mutablePairingText.value = null
         mutableMetricsStats.value = null
         mutableMetricsCsvPath.value = null
+        mutableMuted.value = false
+        mutableSpeakerphoneSelected.value = false
         control?.close()
         control = null
         val running = process ?: return
@@ -155,10 +201,42 @@ class DesktopTorController : OnionDialController, AutoCloseable {
     override suspend fun acceptCall(): Boolean = callRuntime?.accept() ?: false
     override suspend fun declineCall(): Boolean = callRuntime?.decline() ?: false
     override suspend fun hangUp(): Boolean = callRuntime?.hangUp() ?: false
-    override fun shareMetrics() {
-        val file = mutableMetricsCsvPath.value?.let(::File) ?: return
+    override fun setMuted(muted: Boolean) {
+        callRuntime?.setMuted(muted)
+    }
+    override fun setSpeakerphoneEnabled(enabled: Boolean): Boolean = callRuntime?.setSpeakerphone(enabled) ?: false
+    override fun selectAudioInput(id: String?) {
+        require(id == null || audioInputs.any { it.id == id })
+        mutableSelectedAudioInput.value = id
+        if (id == null) preferences.remove("audioInput") else preferences.put("audioInput", id)
+    }
+    override fun selectAudioOutput(id: String?) {
+        require(id == null || audioOutputs.any { it.id == id })
+        mutableSelectedAudioOutput.value = id
+        if (id == null) preferences.remove("audioOutput") else preferences.put("audioOutput", id)
+    }
+    override suspend fun refreshCallHistory() {
+        val runtime = callRuntime
+        if (runtime != null) {
+            runtime.refreshCallHistory()
+            mutableCallHistory.value = runtime.callHistory.value
+        } else {
+            mutableCallHistory.value = withContext(Dispatchers.IO) {
+                loadCallHistory(Paths.get(appDataDir(), "tor").toString())
+            }
+        }
+    }
+    override fun shareMetrics(csvPath: String?) {
+        val file = (csvPath ?: mutableMetricsCsvPath.value)?.let(::File) ?: return
         try {
-            if (Desktop.isDesktopSupported()) Desktop.getDesktop().open(file.parentFile)
+            val korean = Locale.getDefault().language == "ko"
+            val chooser = JFileChooser().apply {
+                dialogTitle = if (korean) "통화 측정 CSV 저장" else "Save call metrics CSV"
+                selectedFile = File(file.name)
+            }
+            if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+                Files.copy(file.toPath(), chooser.selectedFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
         } catch (_: Exception) {
             // The CSV path remains visible and copyable in the UI.
         }

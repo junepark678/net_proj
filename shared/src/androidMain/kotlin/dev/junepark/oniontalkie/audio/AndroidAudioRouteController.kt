@@ -13,6 +13,8 @@ class AndroidAudioRouteController(context: Context) : AudioRouteController {
     private var previousCommunicationDevice: AudioDeviceInfo? = null
     private var previousSpeakerphoneOn: Boolean? = null
 
+    override val supportsSpeakerphone: Boolean = true
+
     /** Enters MODE_IN_COMMUNICATION on the first acquire; nested call owners are reference-counted. */
     @Synchronized
     override fun beginCommunication() {

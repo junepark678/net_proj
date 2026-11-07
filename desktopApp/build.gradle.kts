@@ -1,3 +1,8 @@
+import org.jetbrains.compose.desktop.application.tasks.AbstractJvmToolOperationTask
+import org.gradle.api.Action
+import org.gradle.api.file.ConfigurableFilePermissions
+import org.gradle.api.file.FileCopyDetails
+
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.compose.multiplatform)
@@ -28,11 +33,23 @@ val stageTorBundle by tasks.registering(Sync::class) {
 val includeTorInAppImage by tasks.registering(Copy::class) {
     dependsOn(tasks.matching { it.name == "createDistributable" })
     from(layout.buildDirectory.dir("compose/tmp/prepareAppResources"))
-    into(layout.buildDirectory.dir("compose/binaries/main/app/OnionDial/lib/app/resources"))
+    val appResources = layout.buildDirectory.dir("compose/binaries/main/app/OnionDial/lib/app/resources")
+    into(appResources)
+    eachFile(Action<FileCopyDetails> {
+        if (name in setOf("tor", "lyrebird", "conjure-client")) {
+            permissions(Action<ConfigurableFilePermissions> { unix("0755") })
+        }
+    })
 }
 
 kotlin {
     jvmToolchain(21)
+    compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
 }
 
 dependencies {
@@ -62,6 +79,18 @@ tasks.configureEach {
     }
     if (name.startsWith("package")) {
         dependsOn(includeTorInAppImage)
+    }
+}
+
+// Keep packaging runtime selection independent of the build/compiler JDK. CI installs
+// Java 17 for the distributable while Gradle and compilation continue on Java 21.
+val onionDialJpackageJavaHome = providers.gradleProperty("onionDialJpackageJavaHome")
+    .orElse(providers.environmentVariable("JAVA_HOME_17_X64"))
+afterEvaluate {
+    onionDialJpackageJavaHome.orNull?.let { selectedJavaHome ->
+        tasks.withType<AbstractJvmToolOperationTask>().configureEach {
+            javaHome.set(selectedJavaHome)
+        }
     }
 }
 

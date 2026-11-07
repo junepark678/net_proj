@@ -22,3 +22,16 @@ data class CallStats(
     val intervalLate: Long = late,
     val intervalPlc: Long = plc,
 )
+
+/** Persisted per-call summary used by the history screen and CSV export action. */
+data class CallHistoryEntry(
+    val id: String,
+    val peerLabel: String,
+    val timestampUtc: String,
+    val durationSeconds: Double,
+    val rttP50Ms: Double?,
+    val jitterP50Ms: Double?,
+    val lossP50Pct: Double?,
+    val bufferP50Ms: Double?,
+    val csvPath: String,
+)

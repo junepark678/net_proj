@@ -1,7 +1,11 @@
 package dev.junepark.oniontalkie.call
 
 import dev.junepark.oniontalkie.audio.AudioRouteController
+import dev.junepark.oniontalkie.audio.AudioInput
+import dev.junepark.oniontalkie.audio.AudioOutput
 import dev.junepark.oniontalkie.audio.NoOpAudioRouteController
+import dev.junepark.oniontalkie.audio.createAudioInput
+import dev.junepark.oniontalkie.audio.createAudioOutput
 import dev.junepark.oniontalkie.call.CallState.Offline
 import dev.junepark.oniontalkie.identity.Contact
 import dev.junepark.oniontalkie.identity.ContactStore
@@ -11,7 +15,9 @@ import dev.junepark.oniontalkie.identity.PairingResult
 import dev.junepark.oniontalkie.identity.Storage
 import dev.junepark.oniontalkie.identity.directoryStorage
 import dev.junepark.oniontalkie.metrics.CallStats
+import dev.junepark.oniontalkie.metrics.CallHistoryEntry
 import dev.junepark.oniontalkie.metrics.FileMetricsSink
+import dev.junepark.oniontalkie.metrics.loadCallHistory
 import dev.junepark.oniontalkie.onion.AuthenticatedCallHandshake
 import dev.junepark.oniontalkie.onion.OnionKeyStore
 import dev.junepark.oniontalkie.onion.OnionServiceKeyProtector
@@ -19,6 +25,7 @@ import dev.junepark.oniontalkie.onion.createOnionServiceKeyProtector
 import dev.junepark.oniontalkie.tor.Socks5TorDialer
 import dev.junepark.oniontalkie.tor.TorControl
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +34,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 
@@ -37,13 +45,15 @@ import java.time.format.DateTimeFormatter
 class JvmOnionCallRuntime private constructor(
     private val control: TorControl,
     socksPort: Int,
-    dataDirectory: String,
+    private val dataDirectory: String,
     private val displayName: String,
     private val scope: CoroutineScope,
     val contactStore: ContactStore,
     storage: Storage,
     keyProtector: OnionServiceKeyProtector,
-    audioRouteController: AudioRouteController,
+    private val audioRouteController: AudioRouteController,
+    inputFactory: () -> AudioInput,
+    outputFactory: () -> AudioOutput,
 ) : AutoCloseable {
     private val lifecycle = Mutex()
     private val identities = IdentityStore(storage)
@@ -55,7 +65,11 @@ class JvmOnionCallRuntime private constructor(
     private val mutablePairing = MutableStateFlow<String?>(null)
     private val mutableMetricsStats = MutableStateFlow<CallStats?>(null)
     private val mutableMetricsCsvPath = MutableStateFlow<String?>(null)
+    private val mutableCallHistory = MutableStateFlow<List<CallHistoryEntry>>(emptyList())
+    private val mutableSpeakerphoneSelected = MutableStateFlow(audioRouteController.isSpeakerphoneSelected())
     private val sessions = OpusCallSessionFactory(
+        inputFactory = inputFactory,
+        outputFactory = outputFactory,
         routeController = audioRouteController,
         metricsSinkFactory = { peerOnion ->
             val peerShort = peerOnion.removeSuffix(".onion").take(12)
@@ -76,6 +90,10 @@ class JvmOnionCallRuntime private constructor(
     val pairingText: StateFlow<String?> = mutablePairing.asStateFlow()
     val metricsStats: StateFlow<CallStats?> = mutableMetricsStats.asStateFlow()
     val metricsCsvPath: StateFlow<String?> = mutableMetricsCsvPath.asStateFlow()
+    val callHistory: StateFlow<List<CallHistoryEntry>> = mutableCallHistory.asStateFlow()
+    val muted: StateFlow<Boolean> = sessions.muted
+    val speakerphoneSelected: StateFlow<Boolean> = mutableSpeakerphoneSelected.asStateFlow()
+    val supportsSpeakerphone: Boolean = audioRouteController.supportsSpeakerphone
 
     init {
         presence = JvmOnionCallPresence(
@@ -99,14 +117,16 @@ class JvmOnionCallRuntime private constructor(
             displayName: String,
             scope: CoroutineScope,
             audioRouteController: AudioRouteController = NoOpAudioRouteController,
+            inputFactory: () -> AudioInput = { createAudioInput() },
+            outputFactory: () -> AudioOutput = { createAudioOutput() },
             storage: Storage = directoryStorage(dataDirectory),
             keyProtector: OnionServiceKeyProtector = createOnionServiceKeyProtector(),
         ): JvmOnionCallRuntime {
             val contacts = ContactStore.open(storage)
             return JvmOnionCallRuntime(
                 control, socksPort, dataDirectory, displayName, scope, contacts, storage, keyProtector,
-                audioRouteController,
-            )
+                audioRouteController, inputFactory, outputFactory,
+            ).also { it.refreshCallHistory() }
         }
     }
 
@@ -126,7 +146,18 @@ class JvmOnionCallRuntime private constructor(
             scope = scope,
         ).also { created ->
             engine = created
-            stateJob = scope.launch { created.state.collect { mutableCallState.value = it } }
+            stateJob = scope.launch {
+                var wasInCall = false
+                created.state.collect { state ->
+                    mutableCallState.value = state
+                    if (state !is CallState.InCall) {
+                        sessions.setMuted(false)
+                        mutableSpeakerphoneSelected.value = audioRouteController.isSpeakerphoneSelected()
+                    }
+                    if (wasInCall && state !is CallState.InCall) refreshCallHistory()
+                    wasInCall = state is CallState.InCall
+                }
+            }
         }
         active.goOnline()
     }
@@ -134,12 +165,28 @@ class JvmOnionCallRuntime private constructor(
     suspend fun goOffline() = lifecycle.withLock {
         engine?.goOffline()
         mutableCallState.value = Offline
+        refreshCallHistory()
     }
 
     suspend fun dial(peerOnion: String): Boolean = engine?.call(peerOnion) ?: false
     suspend fun accept(): Boolean = engine?.accept() ?: false
     suspend fun decline(): Boolean = engine?.decline() ?: false
     suspend fun hangUp(): Boolean = engine?.hangUp() ?: false
+
+    fun setMuted(muted: Boolean) = sessions.setMuted(muted)
+
+    fun setSpeakerphone(enabled: Boolean): Boolean {
+        if (!supportsSpeakerphone) return false
+        val applied = audioRouteController.setSpeakerphone(enabled)
+        if (applied) mutableSpeakerphoneSelected.value = audioRouteController.isSpeakerphoneSelected()
+        return applied
+    }
+
+    suspend fun refreshCallHistory() {
+        mutableCallHistory.value = withContext(Dispatchers.IO) {
+            loadCallHistory(dataDirectory, contactStore.contacts.value)
+        }
+    }
 
     val contacts: StateFlow<List<Contact>>
         get() = contactStore.contacts
@@ -175,6 +222,7 @@ class JvmOnionCallRuntime private constructor(
         lifecycle.withLock {
             if (closed) return@withLock
             engine?.close()
+            refreshCallHistory()
             stateJob?.cancel()
             stateJob = null
             engine = null

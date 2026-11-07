@@ -7,3 +7,9 @@ plugins {
     alias(libs.plugins.compose.multiplatform) apply false
     alias(libs.plugins.compose.compiler) apply false
 }
+
+tasks.register("torLoopbackTest") {
+    group = "verification"
+    description = "Runs the live Tor smoke tests and a two-engine onion-service call."
+    dependsOn(":shared:desktopTest", ":tools:torLoopbackTest")
+}

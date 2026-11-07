@@ -82,6 +82,9 @@ interface AudioOutput {
 
 /** Audio routing scope owned by a call session; desktop implementations may leave it as no-op. */
 interface AudioRouteController {
+    /** Whether this platform exposes a user-selectable speaker route. */
+    val supportsSpeakerphone: Boolean get() = false
+
     fun beginCommunication()
     fun endCommunication()
     fun setSpeakerphone(enabled: Boolean): Boolean

@@ -19,4 +19,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "OnionTalkie"
-include(":shared", ":ui", ":androidApp", ":desktopApp")
+include(":shared", ":ui", ":androidApp", ":desktopApp", ":tools")
