@@ -1,6 +1,7 @@
 package dev.junepark.oniontalkie.identity
 
-/** Private app storage. A failed write must leave the previous file intact. */
+/** Private app storage for JSON records and Tor .auth_private files.
+ * A failed write must leave the previous file intact. */
 interface Storage {
     suspend fun read(name: String): String?
     suspend fun write(name: String, contents: String)

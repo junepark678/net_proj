@@ -17,6 +17,8 @@ class Identity(
     val clientAuthPub: String,
     val clientAuthPrivate: String,
     val displayName: String,
+    /** Tor's tagged ED25519-V3 private key, supplied by OnionService. Null in older identities. */
+    val onionServicePrivateKey: String? = null,
 ) {
     init {
         PairingPayload(onion, clientAuthPub, displayName)

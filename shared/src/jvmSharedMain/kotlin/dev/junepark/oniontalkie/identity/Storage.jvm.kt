@@ -17,7 +17,7 @@ actual fun directoryStorage(dataDirectory: String): Storage {
 
 private class DirectoryStorage(private val directory: Path) : Storage {
     private fun file(name: String): Path {
-        require(name.matches(Regex("[a-z-]+\\.json"))) { "Invalid storage filename" }
+        require(name.matches(Regex("[a-z-]+\\.json|[a-z2-7]{56}\\.auth_private"))) { "Invalid storage filename" }
         return directory.resolve(name)
     }
 

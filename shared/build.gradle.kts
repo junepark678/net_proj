@@ -32,6 +32,7 @@ kotlin {
             dependsOn(commonMain.get())
             dependencies {
                 implementation(libs.concentus)
+                implementation(libs.bouncycastle)
             }
         }
         androidMain.get().dependsOn(jvmSharedMain)
