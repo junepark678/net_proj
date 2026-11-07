@@ -22,3 +22,5 @@ tor-data/
 report/out/
 # Misc
 *.log
+__pycache__/
+*.pyc
