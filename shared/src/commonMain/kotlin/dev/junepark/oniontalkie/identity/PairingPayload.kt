@@ -69,7 +69,7 @@ sealed interface PairingResult {
 
 internal fun validAuthKey(key: String): Boolean = decodeBase32(key)?.size == 32
 
-private fun validOnion(onion: String): Boolean {
+internal fun validOnion(onion: String): Boolean {
     if (onion.length != 62 || !onion.endsWith(".onion") || onion != onion.lowercase()) return false
     val decoded = decodeBase32(onion.removeSuffix(".onion")) ?: return false
     if (decoded.size != 35 || decoded[34] != 3.toByte()) return false
