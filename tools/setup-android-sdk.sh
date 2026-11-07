@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SDK_DIR="${ANDROID_HOME:-$HOME/Android/Sdk}"
 VERSION=16111833
+REVISION=23.0
 BASE_URL=https://dl.google.com/android/repository
 case "$(uname -s)" in
   Linux) ARCH=linux; SHA1=e025545c62a8e64c7559119566a569fb1dec5f60; SHA256=0877a1d048fe4a24efe2eff536ca4223f7adeb58648bb81909d33c446918cfa8 ;;
@@ -14,8 +15,18 @@ ARCHIVE="commandlinetools-${ARCH}-${VERSION}_latest.zip"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$SDK_DIR/cmdline-tools"
-if [[ ! -x "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" ]]; then
-  curl -fsSL "$BASE_URL/$ARCHIVE" -o "$TMP/tools.zip"
+# Require metadata as well as the files used by each package.
+property_is() {
+  [[ -f "$1" ]] && tr -d '\r' < "$1" | grep -Eq "^[[:space:]]*$2[[:space:]]*=[[:space:]]*$3[[:space:]]*$"
+}
+tools_valid() {
+  local dir="$SDK_DIR/cmdline-tools/latest"
+  property_is "$dir/source.properties" 'Pkg\.Revision' "${REVISION//./\\.}" &&
+    [[ -x "$dir/bin/sdkmanager" && -x "$dir/bin/avdmanager" && -x "$dir/bin/android" && -s "$dir/lib/avdmanager-classpath.jar" ]]
+}
+if ! tools_valid; then
+  echo "Downloading Android command-line tools revision $REVISION (archive $VERSION): $BASE_URL/$ARCHIVE"
+  curl -fL --progress-bar "$BASE_URL/$ARCHIVE" -o "$TMP/tools.zip"
   if command -v sha256sum >/dev/null; then
   printf '%s  %s\n' "$SHA1" "$TMP/tools.zip" | sha1sum -c -
   printf '%s  %s\n' "$SHA256" "$TMP/tools.zip" | sha256sum -c -
@@ -25,13 +36,39 @@ if [[ ! -x "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" ]]; then
   fi
   mkdir "$TMP/unpack"
   unzip -q "$TMP/tools.zip" -d "$TMP/unpack"
+  property_is "$TMP/unpack/cmdline-tools/source.properties" 'Pkg\.Revision' "${REVISION//./\\.}"
   rm -rf "$SDK_DIR/cmdline-tools/latest"
   mv "$TMP/unpack/cmdline-tools" "$SDK_DIR/cmdline-tools/latest"
 fi
 SDKMANAGER="$SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
-PACKAGES=("platform-tools" "platforms;android-35" "build-tools;35.0.0")
-if [[ ! -d "$SDK_DIR/platform-tools" || ! -d "$SDK_DIR/platforms/android-35" || ! -d "$SDK_DIR/build-tools/35.0.0" ]]; then
-  yes | "$SDKMANAGER" --sdk_root="$SDK_DIR" --licenses >/dev/null || true
+PACKAGES=()
+if ! property_is "$SDK_DIR/platform-tools/source.properties" 'Pkg\.Revision' '[0-9]+(\.[0-9]+)*' ||
+    [[ ! -x "$SDK_DIR/platform-tools/adb" ]]; then
+  PACKAGES+=("platform-tools")
+fi
+if ! property_is "$SDK_DIR/platforms/android-35/source.properties" 'AndroidVersion\.ApiLevel' '35' ||
+    [[ ! -s "$SDK_DIR/platforms/android-35/android.jar" ]]; then
+  PACKAGES+=("platforms;android-35")
+fi
+if ! property_is "$SDK_DIR/build-tools/35.0.0/source.properties" 'Pkg\.Revision' '35\.0\.0' ||
+    [[ ! -x "$SDK_DIR/build-tools/35.0.0/aapt2" ]]; then
+  PACKAGES+=("build-tools;35.0.0")
+fi
+if (( ${#PACKAGES[@]} )); then
+  # yes can exit with SIGPIPE when sdkmanager finishes; keep sdkmanager's status.
+  set +e
+  yes | "$SDKMANAGER" --sdk_root="$SDK_DIR" --licenses >/dev/null
+  license_status=${PIPESTATUS[1]}
+  set -e
+  if (( license_status != 0 )); then
+    echo "sdkmanager license acceptance failed ($license_status)" >&2
+    exit "$license_status"
+  fi
+  # sdkmanager skips packages whose metadata remains after file corruption.
+  # Remove only invalid required packages so they can be provisioned again.
+  for package in "${PACKAGES[@]}"; do
+    rm -rf "${SDK_DIR:?}/${package//;/\/}"
+  done
   "$SDKMANAGER" --sdk_root="$SDK_DIR" "${PACKAGES[@]}"
 fi
 printf 'sdk.dir=%s\n' "$SDK_DIR" > "$ROOT/local.properties"
