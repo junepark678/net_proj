@@ -27,18 +27,21 @@ can distinguish a short closing interval from a full sample.
 
 Each analyzed row represents one approximately complete second. `t_s` is
 elapsed time within that run; `rtt_ms`, `jitter_ms`, `buffer_ms`, `tx_kbps`, and
-`rx_kbps` are interval measurements. `rtt_ms` may be blank before the first
-PONG; blank values are omitted from RTT statistics. When the sidecar summary is
-present, the report tool drops a final interval shorter than 950 ms. Without a
-sidecar, every supplied row is assumed complete. `loss_pct` is already in
-percentage points: the report averages these per-interval percentages, not
-packet counts. `late` and `plc` are counts within that interval, not cumulative
-counters. PLC rate is a fraction: `sum(plc frames) / total received+concealed
-frames`. With 20 ms frames and continuous playout, that denominator is 50 times
-the number of analyzed rows. The CSV has no received-frame counter; do not
-include paused playout or partial intervals without their summary sidecar. Late
-frames are not added to this denominator. `circuit_id` and `hops` describe the
-circuit and are not averaged.
+`rx_kbps` are interval measurements. `rtt_ms` is the most recent matched PONG
+observed in that interval; it can repeat across rows when no newer PONG arrives,
+so pooled percentiles are snapshots, not counts of independent probes. It may
+be blank before the first PONG; blank values are omitted from RTT statistics.
+When the sidecar summary is present, the report tool drops a final interval
+shorter than 950 ms. Without a sidecar, every supplied row is assumed complete.
+`loss_pct` is the per-interval percentage of missing application AUDIO sequence
+numbers; it does not measure IP packet loss or TCP retransmissions. The report
+averages these per-interval percentages, not packet counts. `late` and `plc` are
+counts within that interval, not cumulative counters. PLC rate is a fraction:
+`sum(plc frames) / total received+concealed frames`. With 20 ms frames and
+continuous playout, that denominator is 50 times the number of analyzed rows.
+The CSV has no received-frame counter; do not include paused playout or partial
+intervals without their summary sidecar. Late frames are not added to this
+denominator. `circuit_id` and `hops` describe the circuit and are not averaged.
 
 The summary's `n_endpoint_csvs` counts one file per endpoint; it is not a count
 of paired calls. Three two-ended trials therefore contribute six endpoint CSVs.
