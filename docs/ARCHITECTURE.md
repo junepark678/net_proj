@@ -38,9 +38,10 @@ Android must call `AndroidAppData.init(context)` from `Application.onCreate` fir
 the default then uses the application's private `filesDir`. Desktop defaults to
 `$XDG_DATA_HOME/onion-talkie`, falling back to `~/.local/share/onion-talkie`.
 Its JVM implementation is shared through `jvmSharedMain`, keeping `commonMain`
-free of platform APIs. JSON files use atomic replacement where supported, with
-a regular replacing move as the unsupported-filesystem fallback; identity files use
-owner-only permissions on POSIX filesystems. Use one `IdentityStore` and one
+free of platform APIs. JSON files are written to a temporary file in the same
+directory and atomically moved into place; a filesystem that cannot do an atomic
+replace makes the write fail with the previous file intact rather than risk a torn
+file. Identity files use owner-only permissions on POSIX filesystems. Use one `IdentityStore` and one
 `ContactStore` per directory. Corrupt or invalid files raise an error rather
 than silently replacing an identity or discarding peers. Unknown JSON fields are
 ignored for forward compatibility.

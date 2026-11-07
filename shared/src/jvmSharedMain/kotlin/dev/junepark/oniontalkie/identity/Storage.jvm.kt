@@ -1,5 +1,6 @@
 package dev.junepark.oniontalkie.identity
 
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Path
@@ -38,8 +39,10 @@ private class DirectoryStorage(private val directory: Path) : Storage {
             Files.write(temporary, contents.toByteArray(Charsets.UTF_8))
             try {
                 Files.move(temporary, destination, ATOMIC_MOVE, REPLACE_EXISTING)
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(temporary, destination, REPLACE_EXISTING)
+            } catch (e: AtomicMoveNotSupportedException) {
+                // A non-atomic replacing move could leave a torn destination on failure,
+                // which would break the Storage contract. Fail without touching the file.
+                throw IOException("Filesystem for $directory does not support atomic replacement", e)
             }
         } finally {
             Files.deleteIfExists(temporary)
