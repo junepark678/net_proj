@@ -1,5 +1,6 @@
 package dev.junepark.oniontalkie.audio
 
+import dev.junepark.oniontalkie.shared.audio.AudioConstants
 import io.github.jaredmdobson.concentus.OpusApplication
 import io.github.jaredmdobson.concentus.OpusDecoder
 import io.github.jaredmdobson.concentus.OpusEncoder

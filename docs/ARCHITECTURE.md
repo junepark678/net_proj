@@ -112,6 +112,16 @@ Tor → TCP → deframer → adaptive jitter buffer (target = p95 inter-arrival,
     max 1500 ms, PLC on gaps via Opus decode(null)) → Opus decode → speaker
 ```
 
+The common `dev.junepark.oniontalkie.shared.audio.AudioConstants` object owns the
+shared audio format and Opus settings for the codec and platform audio I/O (#13).
+`OpusCodec.decode` and `decodeFec` return the sample count written. When the next
+packet arrives before a lost frame's playout deadline, `decodeFec(nextPacket, out)`
+recovers that frame from LBRR data (or falls back to PLC when absent); decode the
+same next packet normally afterward. Use `decode(null, out)` when it is unavailable.
+One encode thread and one decode thread may share a call's codec; each direction
+is independently single-threaded. Malformed payloads rejected by Concentus throw
+`OpusException`.
+
 ## Tor lifecycle
 
 - Android: `tor-android` AAR binary, started by a foreground service

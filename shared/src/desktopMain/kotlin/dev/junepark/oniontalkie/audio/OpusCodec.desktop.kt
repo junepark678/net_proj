@@ -1,3 +1,5 @@
 package dev.junepark.oniontalkie.audio
 
-actual fun createOpusCodec(): OpusCodec = ConcentusOpusCodec(complexity = 10)
+import dev.junepark.oniontalkie.shared.audio.AudioConstants
+
+actual fun createOpusCodec(): OpusCodec = ConcentusOpusCodec(complexity = AudioConstants.DESKTOP_OPUS_COMPLEXITY)
