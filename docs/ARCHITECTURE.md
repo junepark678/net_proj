@@ -73,8 +73,62 @@ Tor → TCP → deframer → adaptive jitter buffer (target = p95 inter-arrival,
 
 ## Metrics and the report
 
-Every call writes a CSV line per second (rtt_ms, jitter_ms, loss_pct,
-buffer_ms, bitrate_kbps, circuit_hops) to the app's data directory. The
-`tools/` scripts aggregate these into the tables and figures used in the
-report's comparison section (Tor relay traversal vs. STUN hole punching vs.
-TURN relay vs. direct LAN).
+Every call writes a UTF-8 CSV line per second with this stable header:
+
+```csv
+t_s,rtt_ms,jitter_ms,loss_pct,late,plc,buffer_ms,tx_kbps,rx_kbps,circuit_id,hops
+```
+
+`shared`'s `metrics.MetricsLogger` exposes a read-only `StateFlow<CallStats>`
+for the live screen. The call owner creates one logger with a `FileMetricsSink`
+and a coroutine scope on an I/O dispatcher, then feeds it transport and playout
+events. The transport, jitter buffer and Tor control integrations are owned by
+their respective issues; no call engine exists in the scaffold yet.
+
+```kotlin
+val files = FileMetricsSink(appData, startedAtIso, peerShort)
+val metrics = MetricsLogger(files, callIoScope)
+try {
+    // Feed AUDIO sequence/timestamp to onAudioReceived, and count all application
+    // stream bytes once with onTransportBytes (including framing/control bytes).
+    // Feed sent PING tokens and PONG echoes to onPingSent/onPong, playout events
+    // to onPlayout, and the call's selected circuit + GETINFO circuit-status
+    // response to onCircuitStatus. Collect metrics.stats for the live screen.
+} finally {
+    metrics.close()
+}
+```
+
+RTT uses matched local PING send/receive times, so peer clock offset is irrelevant.
+Jitter follows [RFC 3550 §6.4.1](https://www.rfc-editor.org/rfc/rfc3550#section-6.4.1)
+in milliseconds, including u32 timestamp wrap. Loss is the cumulative percentage
+of missing u16 sequence numbers from the first frame observed to the highest
+sequence received. Duplicates do not count as extra receptions; reordered frames
+within the last 32,768 sequence numbers can repair gaps. Sequence jumps of half
+the sequence space or more are ambiguous; a sender restart requires a new logger.
+Late and PLC counts are cumulative jitter-buffer events, separate from network
+sequence loss. Bitrates are decimal kilobits per second over the actual sampling
+interval, excluding Tor relay overhead. `hops` counts the path entries in the
+selected BUILT circuit's [GETINFO circuit-status](https://spec.torproject.org/control-spec/commands.html)
+reply, never an arbitrary unrelated circuit. Unavailable RTT/circuit fields are
+blank; a known circuit ID may have an unknown hop count.
+
+Files are `<appData>/calls/<iso-timestamp>-<peer-short>.csv`. The supplied UTC
+timestamp has its colons removed for portable filenames; `peer-short` is a safe
+1–32 character identifier. Each call's summary lives beside the CSV in
+`<appData>/calls/<iso-timestamp>-<peer-short>/summary.json`, preserving every
+call's results. Use a fractional-second timestamp to distinguish rapid calls to
+the same peer; existing call paths are rejected rather than truncated.
+
+Hangup must call `close()`, even after cancellation of the sampling scope. It
+flushes any partial second using its actual duration, writes the summary, and
+closes the file. Exact-second hangups do not duplicate the last row. The summary
+contains `samples`, `duration_s` and `{p50,p95}` objects for every numeric metric
+except elapsed time. Percentiles use **nearest rank** over CSV snapshots
+(`sorted[ceil(p * n) - 1]`); unavailable measurements are omitted and empty
+percentiles are JSON `null`. Each row, including a final partial row, has equal
+weight. Summaries describe sampled values, not all individual packet RTTs.
+
+The `tools/` scripts can aggregate these files into the tables and figures used
+in the report's comparison section (Tor relay traversal vs. STUN hole punching
+vs. TURN relay vs. direct LAN). No upload or synchronization is performed.

@@ -1,0 +1,230 @@
+package dev.junepark.oniontalkie.metrics
+
+import kotlin.math.abs
+import kotlin.time.TimeSource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+
+/**
+ * One logger per call, sampling once per second in [scope]. Feed events in receive
+ * order; concurrent producers and sampling are serialized. [clockMs] must be a
+ * nondecreasing local monotonic clock, independent of the peer's clock.
+ *
+ * Run [scope] on an I/O dispatcher: sink writes are synchronous. Always call
+ * [close] in the call's finally block, including after scope cancellation. It
+ * flushes a final partial interval, writes the summary and closes the sink.
+ * Sink failures propagate to the scope (sampling) or caller (events/close).
+ */
+class MetricsLogger(
+    private val sink: MetricsSink,
+    scope: CoroutineScope,
+    private val clockMs: () -> Long = monotonicClock(),
+) {
+    private val mutex = Mutex()
+    private val startedMs = clockMs()
+    private var lastSampleMs = startedMs
+    private var closed = false
+    private val mutableStats = MutableStateFlow(CallStats())
+
+    /** Read-only, per-second snapshots for the live metrics screen. */
+    val stats: StateFlow<CallStats> = mutableStats.asStateFlow()
+
+    private val samples = mutableListOf<CallStats>()
+    private val pendingPings = linkedMapOf<Long, Long>()
+    private var rttMs: Double? = null
+    private var previousSenderMs: Long? = null
+    private var previousArrivalMs = 0L
+    private var jitterMs = 0.0
+    private var firstSequence: Long? = null
+    private var highestSequence = 0L
+    private val seenSequences = mutableSetOf<Long>()
+    private var receivedFrames = 0L
+    private var txBytes = 0L
+    private var rxBytes = 0L
+    private var late = 0L
+    private var plc = 0L
+    private var bufferMs = 0.0
+    private var circuitId: String? = null
+    private var hops: Int? = null
+
+    init {
+        try {
+            sink.appendCsv("$CSV_HEADER\n")
+        } catch (failure: Throwable) {
+            sink.close()
+            throw failure
+        }
+    }
+
+    private val sampler = scope.launch {
+        while (isActive) {
+            delay(1_000)
+            mutex.withLock {
+                if (!closed) sample(clockMs())
+            }
+        }
+    }
+
+    /** Records a u16 sequence number and u32 sender timestamp in ms from AUDIO. */
+    suspend fun onAudioReceived(sequence: Int, senderTimestampMs: Long) = update {
+        require(sequence in 0..0xffff)
+        require(senderTimestampMs in 0..UINT32_MASK)
+        val arrivalMs = clockMs()
+        previousSenderMs?.let { previous ->
+            val senderDelta = signedDelta(senderTimestampMs, previous, 32)
+            val difference = (arrivalMs - previousArrivalMs) - senderDelta
+            // RFC 3550 §6.4.1: use consecutive arrivals, even when reordered.
+            jitterMs += (abs(difference.toDouble()) - jitterMs) / 16.0
+        }
+        previousSenderMs = senderTimestampMs
+        previousArrivalMs = arrivalMs
+        recordSequence(sequence)
+    }
+
+    /** Records the exact u32 PING token and its local send time; keeps 64 probes. */
+    suspend fun onPingSent(timestampMs: Long) = update {
+        require(timestampMs in 0..UINT32_MASK)
+        pendingPings[timestampMs] = clockMs()
+        if (pendingPings.size > 64) pendingPings.remove(pendingPings.keys.first())
+    }
+
+    /** Matches a PONG to a sent PING. Unknown and duplicate echoes are ignored. */
+    suspend fun onPong(echoedTimestampMs: Long) = update {
+        require(echoedTimestampMs in 0..UINT32_MASK)
+        pendingPings.remove(echoedTimestampMs)?.let { sentMs ->
+            rttMs = (clockMs() - sentMs).toDouble()
+        }
+    }
+
+    /**
+     * Adds transport bytes, including protocol overhead. Count every read/write
+     * once here; [onAudioReceived] does not also count bytes. This excludes Tor's
+     * encrypted relay overhead, which is not visible on the application stream.
+     */
+    suspend fun onTransportBytes(sent: Long = 0, received: Long = 0) = update {
+        require(sent >= 0 && received >= 0)
+        txBytes += sent
+        rxBytes += received
+    }
+
+    /** Adds jitter-buffer discard/PLC events and replaces the current delay. */
+    suspend fun onPlayout(bufferMs: Double, late: Long = 0, plc: Long = 0) = update {
+        require(bufferMs.isFinite() && bufferMs >= 0 && late >= 0 && plc >= 0)
+        this.bufferMs = bufferMs
+        this.late += late
+        this.plc += plc
+    }
+
+    /**
+     * Updates the call's circuit, identified by the transport/control-port owner.
+     * [response] is GETINFO circuit-status data (or its full reply). Only a BUILT
+     * entry for [circuitId] supplies a hop count; missing data clears stale hops.
+     * Pass null for [circuitId] to clear all circuit information.
+     */
+    suspend fun onCircuitStatus(circuitId: String?, response: String?) = update {
+        require(circuitId == null || Regex("[0-9]+").matches(circuitId))
+        this.circuitId = circuitId
+        hops = response?.lineSequence()?.map { it.trim().split(Regex("\\s+")) }
+            ?.firstOrNull { it.size >= 3 && it[0] == circuitId && it[1] == "BUILT" }
+            ?.get(2)?.takeUnless { '=' in it && !it.startsWith('$') }
+            ?.split(',')?.takeIf { path -> path.all { it.isNotEmpty() } }?.size
+    }
+
+    /** Stops sampling and persists the final interval/summary. Safe to repeat. */
+    suspend fun close() = withContext(NonCancellable) {
+        sampler.cancelAndJoin()
+        mutex.withLock {
+            if (!closed) {
+                closed = true
+                try {
+                    sample(clockMs())
+                    sink.writeSummary(summaryJson(samples, (clockMs() - startedMs) / 1_000.0))
+                } finally {
+                    sink.close()
+                }
+            }
+        }
+    }
+
+    private suspend fun update(block: () -> Unit) = mutex.withLock {
+        check(!closed) { "Metrics logger is closed" }
+        block()
+    }
+
+    private fun recordSequence(sequence: Int) {
+        val first = firstSequence
+        if (first == null) {
+            firstSequence = sequence.toLong()
+            highestSequence = sequence.toLong()
+        }
+        val extended = highestSequence + signedDelta(sequence.toLong(), highestSequence and 0xffff, 16)
+        if (extended > highestSequence) {
+            // Retain half the u16 sequence space to deduplicate and repair gaps
+            // on reordering. Each evicted sequence is visited only once.
+            for (expired in (highestSequence - 32_767)..(extended - 32_768)) {
+                seenSequences.remove(expired)
+            }
+            highestSequence = extended
+        }
+        if (extended >= firstSequence!! && extended > highestSequence - 32_768 && seenSequences.add(extended)) {
+            receivedFrames++
+        }
+    }
+
+    private fun sample(nowMs: Long) {
+        val intervalMs = nowMs - lastSampleMs
+        if (intervalMs <= 0) return
+        val expected = firstSequence?.let { highestSequence - it + 1 } ?: 0
+        val snapshot = CallStats(
+            elapsedSeconds = (nowMs - startedMs) / 1_000.0,
+            rttMs = rttMs,
+            jitterMs = jitterMs,
+            lossPct = if (expected == 0L) 0.0 else (expected - receivedFrames) * 100.0 / expected,
+            late = late,
+            plc = plc,
+            bufferMs = bufferMs,
+            txKbps = txBytes * 8.0 / intervalMs,
+            rxKbps = rxBytes * 8.0 / intervalMs,
+            circuitId = circuitId,
+            hops = hops,
+        )
+        sink.appendCsv(snapshot.toCsv() + "\n")
+        samples.add(snapshot)
+        mutableStats.value = snapshot
+        txBytes = 0
+        rxBytes = 0
+        lastSampleMs = nowMs
+    }
+
+    companion object {
+        /** Stable report/export schema, in architecture order. */
+        const val CSV_HEADER = "t_s,rtt_ms,jitter_ms,loss_pct,late,plc,buffer_ms,tx_kbps,rx_kbps,circuit_id,hops"
+    }
+}
+
+private const val UINT32_MASK = 0xffff_ffffL
+
+private fun signedDelta(current: Long, previous: Long, bits: Int): Long {
+    val half = 1L shl (bits - 1)
+    return ((current - previous + half) and ((1L shl bits) - 1)) - half
+}
+
+private fun monotonicClock(): () -> Long {
+    val origin = TimeSource.Monotonic.markNow()
+    return { origin.elapsedNow().inWholeMilliseconds }
+}
+
+private fun CallStats.toCsv(): String = listOf(
+    elapsedSeconds, rttMs, jitterMs, lossPct, late, plc, bufferMs,
+    txKbps, rxKbps, circuitId, hops,
+).joinToString(",") { it?.toString() ?: "" }
