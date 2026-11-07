@@ -23,15 +23,12 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
+          cmdline-tools-version: '15859902'
           packages: "platform-tools platforms;android-35 build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
       - name: Build and test
         run: |
-          if [ -x ./gradlew ]; then
-            ./gradlew --no-daemon build
-          else
-            echo "No Gradle wrapper yet (issue #1/#2 pending); skipping build."
-          fi
+          ./gradlew --no-daemon build :shared:allTests :androidApp:assembleDebug :desktopApp:createDistributable
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -41,3 +38,4 @@ jobs:
           path: |
             **/build/outputs/apk/**/*.apk
             **/build/reports/tests/**
+            desktopApp/build/compose/binaries/main/app/**
