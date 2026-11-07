@@ -27,24 +27,28 @@ data class PairingPayload(
             if (text.length > 200 || text.encodeToByteArray().size > 200) {
                 return PairingResult.Invalid(PairingError.TooLong)
             }
-            val fields = text.split(';')
+            val fields = text.split(';', limit = 4)
             if (fields.size != 4) return PairingResult.Invalid(PairingError.Format)
             if (fields[0] != "onion-talkie:v1") {
                 return PairingResult.Invalid(
                     if (fields[0].startsWith("onion-talkie:v")) PairingError.Version else PairingError.Format,
                 )
             }
-            val error = validate(1, fields[1], fields[2], fields[3])
+            // Reject non-ASCII onion input before case folding can turn it into ASCII.
+            if (fields[1].any { it.code > 127 }) return PairingResult.Invalid(PairingError.Onion)
+            val onion = fields[1].lowercase()
+            // Validate the original key before uppercase() (e.g. long s must not become S).
+            val error = validate(1, onion, fields[2], fields[3])
             return if (error != null) PairingResult.Invalid(error)
-            else PairingResult.Valid(PairingPayload(fields[1], fields[2], fields[3]))
+            else PairingResult.Valid(PairingPayload(onion, fields[2].uppercase(), fields[3]))
         }
 
         private fun validate(version: Int, onion: String, key: String, name: String): PairingError? {
             if (version != 1) return PairingError.Version
             if (!validOnion(onion)) return PairingError.Onion
             if (!validAuthKey(key)) return PairingError.ClientAuthKey
-            // The delimiter, controls, and malformed UTF-16 are forbidden; ordinary Unicode is preserved.
-            if (name.isBlank() || name.any { it == ';' || it.isISOControl() } ||
+            // Controls and malformed UTF-16 are forbidden; Unicode and semicolons are preserved.
+            if (name.isBlank() || name.any { it.isISOControl() } ||
                 name.encodeToByteArray().decodeToString() != name
             ) return PairingError.DisplayName
             val text = "onion-talkie:v1;$onion;$key;$name"
@@ -77,12 +81,13 @@ private fun validOnion(onion: String): Boolean {
 /** Accepts RFC 4648 base32, either case, with no padding or nonzero trailing pad bits. */
 internal fun decodeBase32(text: String): ByteArray? {
     if (text.length != 52 && text.length != 56) return null
+    // Check the entire input before any case conversion; Unicode folding is not base32.
+    if (text.any { it !in 'a'..'z' && it !in 'A'..'Z' && it !in '2'..'7' }) return null
     val bytes = ByteArray(text.length * 5 / 8)
     var buffer = 0
     var bits = 0
     var index = 0
     for (char in text) {
-        if (char !in 'a'..'z' && char !in 'A'..'Z' && char !in '2'..'7') return null
         val value = "abcdefghijklmnopqrstuvwxyz234567".indexOf(char.lowercaseChar())
         if (value < 0) return null
         buffer = (buffer shl 5) or value

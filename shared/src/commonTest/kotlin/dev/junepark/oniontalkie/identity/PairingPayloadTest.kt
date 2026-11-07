@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 internal const val ONION = "aaaqeayeaudaocajbifqydiob4ibceqtcqkrmfyydenbwha5dyp3kead.onion"
@@ -29,12 +30,53 @@ class PairingPayloadTest {
     }
 
     @Test
+    fun realWorldOnionFixturesAreAccepted() {
+        // DuckDuckGo and Tor Project fixtures from candidate #46.
+        for (onion in listOf(
+            "duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion",
+            "2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion",
+        )) {
+            val original = PairingPayload(onion, KEY, "Peer")
+            assertEquals(original, assertIs<PairingResult.Valid>(PairingPayload.parse(original.encode())).payload)
+        }
+    }
+
+    @Test
+    fun parsingNormalizesOnionAndKeyCase() {
+        for (onion in listOf(ONION, ONION.uppercase())) {
+            for (key in listOf(KEY, KEY.lowercase())) {
+                val parsed = assertIs<PairingResult.Valid>(
+                    PairingPayload.parse("onion-talkie:v1;$onion;$key;June"),
+                ).payload
+                assertEquals(payload(), parsed)
+                assertEquals(payload().encode(), parsed.encode())
+            }
+        }
+    }
+
+    @Test
+    fun displayNameSemicolonsRoundTrip() {
+        val original = payload("준; phone; 📞;")
+        assertEquals(original, assertIs<PairingResult.Valid>(PairingPayload.parse(original.encode())).payload)
+    }
+
+    @Test
+    fun nonAsciiBase32IsRejectedBeforeCaseConversion() {
+        val key = "S" + KEY.drop(1)
+        assertTrue(validAuthKey(key))
+        val longS = "ſ" + key.drop(1)
+        assertEquals(key, longS.uppercase())
+        assertNull(decodeBase32(longS))
+        invalid("onion-talkie:v1;$ONION;$longS;June", PairingError.ClientAuthKey)
+        assertFailsWith<IllegalArgumentException> { PairingPayload(ONION, longS, "June") }
+    }
+
+    @Test
     fun tamperedChecksumAndVersionAreRejected() {
         val checksumChanged = ONION.replaceRange(52, 53, if (ONION[52] == 'a') "b" else "a")
         invalid("onion-talkie:v1;$checksumChanged;$KEY;June", PairingError.Onion)
         invalid("onion-talkie:v1;${ONION.replaceRange(55, 56, "e")};$KEY;June", PairingError.Onion)
         invalid("onion-talkie:v1;${"a".repeat(16)}.onion;$KEY;June", PairingError.Onion)
-        invalid("onion-talkie:v1;${ONION.uppercase()};$KEY;June", PairingError.Onion)
     }
 
     @Test
@@ -43,7 +85,7 @@ class PairingPayloadTest {
             invalid("onion-talkie:v1;$ONION;$key;June", PairingError.ClientAuthKey)
         }
         val lower = PairingPayload(ONION, KEY.lowercase(), "Peer")
-        assertEquals(lower, assertIs<PairingResult.Valid>(PairingPayload.parse(lower.encode())).payload)
+        assertEquals(lower.copy(clientAuthPub = KEY), assertIs<PairingResult.Valid>(PairingPayload.parse(lower.encode())).payload)
     }
 
     @Test
@@ -51,11 +93,9 @@ class PairingPayloadTest {
         invalid("", PairingError.Format)
         invalid(payload().encode().replace("v1;", "v2;"), PairingError.Version)
         invalid(payload().encode().replace("onion-talkie:", "other:"), PairingError.Format)
-        invalid(payload().encode() + ";extra", PairingError.Format)
         for (name in listOf("", "  ", "new\nline", "tab\tname", "\u0000", "\uD800")) {
             invalid("onion-talkie:v1;$ONION;$KEY;$name", PairingError.DisplayName)
         }
-        assertFailsWith<IllegalArgumentException> { payload("semi;colon") }
         assertFailsWith<IllegalArgumentException> { PairingPayload(ONION, KEY, "June", version = 2) }
     }
 
