@@ -296,6 +296,11 @@ internal fun locateBundledDesktopBinary(): File? {
         else -> return null
     }
     val executable = if (platform.startsWith("windows")) "tor.exe" else "tor"
+    System.getProperty("compose.application.resources.dir")
+        ?.takeIf { it.isNotBlank() }
+        ?.let { Paths.get(it).resolve("tor/$platform/tor/$executable").toFile() }
+        ?.takeIf { Files.isExecutable(it.toPath()) }
+        ?.let { return it }
     val start = Paths.get(System.getProperty("user.dir").orEmpty()).toAbsolutePath().normalize()
     return generateSequence(start) { it.parent }
         .map { it.resolve("build/tor/$platform/tor/$executable") }

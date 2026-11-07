@@ -12,11 +12,27 @@ net_proj/
 │   ├── commonTest/    protocol/jitter/state-machine tests (run on JVM)
 │   └── jvmSharedTest/ codec tests and micro-benchmark (both JVM targets)
 ├── ui/                Compose Multiplatform screens + view models (shared)
-├── androidApp/        Android entry point, foreground service, QR scan
-├── desktopApp/        JVM desktop entry point, QR display/import
+├── androidApp/        Android entry point, foreground service, camera QR scan
+├── desktopApp/        JVM window, tray controls, QR display/image import
 ├── tools/             loopback simulator, Tor latency probe, report data scripts
 └── report/            the 심화연구보고서 sources (Markdown → PDF), figures, data
 ```
+
+## App shells and pairing
+
+The shared Compose screen displays the local pairing QR, lets users paste or
+enter a pairing code, and adds validated contacts through the runtime
+controller. Android adds QR scanning through ZXing Embedded after an explicit
+camera-permission explanation; the manual-entry path does not require camera
+access. Desktop decodes a selected image with ZXing core and keeps import text
+available through paste. Its system tray shows offline, bootstrap, online, and
+in-call state, with controls to go online/offline or quit. Closing the window
+hides it in the tray when the platform supports a tray.
+
+Native desktop distribution builds fetch the Tor Expert Bundle for the build
+host, verify the pinned SHA-256, and include it under the application resources.
+At runtime `TorProcess` checks that packaged resource path before searching the
+development `build/tor` directory or `PATH`.
 
 ## Identity and pairing
 
