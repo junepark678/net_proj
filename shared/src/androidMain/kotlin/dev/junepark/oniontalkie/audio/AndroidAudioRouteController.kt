@@ -6,7 +6,7 @@ import android.media.AudioManager
 import android.os.Build
 
 /** Owns the communication audio mode and speaker route for one application process. */
-class AndroidAudioRouteController(context: Context) {
+class AndroidAudioRouteController(context: Context) : AudioRouteController {
     private val audioManager = context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var callUsers = 0
     private var previousMode: Int? = null
@@ -15,7 +15,7 @@ class AndroidAudioRouteController(context: Context) {
 
     /** Enters MODE_IN_COMMUNICATION on the first acquire; nested call owners are reference-counted. */
     @Synchronized
-    fun beginCommunication() {
+    override fun beginCommunication() {
         if (callUsers == 0) {
             previousMode = audioManager.mode
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -30,7 +30,7 @@ class AndroidAudioRouteController(context: Context) {
 
     /** Restores the route and mode captured by the first [beginCommunication] call. */
     @Synchronized
-    fun endCommunication() {
+    override fun endCommunication() {
         if (callUsers == 0) return
         callUsers--
         if (callUsers != 0) return
@@ -50,7 +50,7 @@ class AndroidAudioRouteController(context: Context) {
 
     /** Selects the built-in speaker or returns to the system's default communication device. */
     @Synchronized
-    fun setSpeakerphone(enabled: Boolean): Boolean {
+    override fun setSpeakerphone(enabled: Boolean): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (!enabled) {
                 audioManager.clearCommunicationDevice()
@@ -66,7 +66,7 @@ class AndroidAudioRouteController(context: Context) {
     }
 
     @Synchronized
-    fun isSpeakerphoneSelected(): Boolean = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+    override fun isSpeakerphoneSelected(): Boolean = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         audioManager.communicationDevice?.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
     } else {
         legacySpeakerphoneOn()

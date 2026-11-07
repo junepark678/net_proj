@@ -172,6 +172,17 @@ One encode thread and one decode thread may share a call's codec; each direction
 is independently single-threaded. Malformed payloads rejected by Concentus throw
 `OpusException`.
 
+`OpusCallSessionFactory` is the concrete `CallSessionFactory` for this path. It
+owns one codec and device pair per accepted call, captures and encodes 960-sample
+frames, and sends them through the engine's serialized writer. Received AUDIO
+frames enter a bounded queue before the sequence-aware jitter buffer; decoded
+frames and PLC output are written to the selected device. The ingress queue holds
+up to 1.5 seconds and the egress queue holds two frames; both drop the oldest
+queued frame on overflow to keep live speech current. `CallMediaMetrics` exposes
+jitter-buffer state, hardware underruns, and queue-drop counts to the caller.
+Android composition must pass `AndroidAudioRouteController` to select and restore
+the communication route; the default route is a no-op for desktop.
+
 ## Tor lifecycle
 
 - Android: `tor-android` AAR binary, started by a foreground service
@@ -194,9 +205,10 @@ t_s,rtt_ms,jitter_ms,loss_pct,late,plc,buffer_ms,tx_kbps,rx_kbps,circuit_id,hops
 `shared`'s `metrics.MetricsLogger` exposes a read-only `StateFlow<CallStats>`
 for the live screen. The call owner creates one logger with a `FileMetricsSink`
 and a coroutine scope on an I/O dispatcher, then feeds it transport and playout
-events. The transport, jitter buffer and Tor control integrations are owned by
-their respective issues. The pluggable call-session owner is responsible for
-connecting the media pipeline and its metrics lifecycle.
+events. `OpusCallSession` now supplies media-side jitter, playout, underrun, and
+queue-drop snapshots; app composition still needs to connect those snapshots and
+transport events to `MetricsLogger` and persist the call summary. Tor circuit
+metrics also remain part of the Tor integration.
 
 ```kotlin
 val files = FileMetricsSink(appData, startedAtIso, peerShort)

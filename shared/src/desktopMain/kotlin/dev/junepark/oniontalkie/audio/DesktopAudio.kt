@@ -80,7 +80,7 @@ class DesktopAudioOutput(private val deviceName: String? = null) : AudioOutput {
     private var underruns = 0L
 
     /** Approximate count of writes that found the Java Sound queue empty after playback began. */
-    val underrunCount: Long get() = underruns
+    override val underrunCount: Long get() = underruns
 
     override fun start() {
         check(line == null) { "Audio output is already started" }

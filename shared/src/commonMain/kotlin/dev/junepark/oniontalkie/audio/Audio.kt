@@ -80,8 +80,24 @@ interface AudioOutput {
     fun stop()
 }
 
-/** Creates platform capture. Currently unsupported until device implementation #11/#12. */
+/** Audio routing scope owned by a call session; desktop implementations may leave it as no-op. */
+interface AudioRouteController {
+    fun beginCommunication()
+    fun endCommunication()
+    fun setSpeakerphone(enabled: Boolean): Boolean
+    fun isSpeakerphoneSelected(): Boolean
+}
+
+/** Default route implementation for platforms that have no voice-call audio mode. */
+object NoOpAudioRouteController : AudioRouteController {
+    override fun beginCommunication() = Unit
+    override fun endCommunication() = Unit
+    override fun setSpeakerphone(enabled: Boolean) = false
+    override fun isSpeakerphoneSelected() = false
+}
+
+/** Creates platform microphone capture. */
 expect fun createAudioInput(): AudioInput
 
-/** Creates platform playback. Currently unsupported until device implementation #11/#12. */
+/** Creates platform speaker/headphone playback. */
 expect fun createAudioOutput(): AudioOutput
