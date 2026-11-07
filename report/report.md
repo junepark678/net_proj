@@ -35,6 +35,8 @@ TEXMFCNF=/usr/share/texmf-dist/web2c pandoc report/report.md --resource-path=rep
 \textbf{그림 1.} PAT 환경의 직접 연결, TURN 중계, Tor onion-service rendezvous 경로 비교
 \end{center}
 
+그림의 NAT A/B 표시는 PAT 매핑을 수행하는 게이트웨이를 일반적으로 나타낸다.
+
 ## 1. 탐구 동기
 
 집이나 학교의 여러 기기는 하나의 공인 IPv4 주소를 나누어 인터넷에 접속한다. 웹 접속은 잘 되는데, 왜 외부 친구가 내 기기에 먼저 전화를 걸기는 어려울까? 이번 탐구에서는 PAT가 연결을 어떻게 관리하는지 살펴보고, 직접 경로를 찾는 STUN/ICE와 중계 경로를 쓰는 TURN 및 Tor를 비교했다. Tor를 이용한 통화가 언제 의미 있고 언제 맞지 않는지도 실제 앱의 측정 자료로 확인했다.
@@ -58,11 +60,13 @@ Onion Dial은 Android와 데스크톱에서 각 기기가 직접 Tor onion servi
 | E1 simulated LAN profile | 3 / 4.4 | 1.3 / 2.5 | 0.14% |
 | E2 same-host Tor | 1,086.5 / 20,152.8 | 27.2 / 61.3 | 48.47% |
 
+PLC(Packet Loss Concealment, 패킷 손실 은폐)는 재생 시각까지 도착하지 않은 음성 프레임을 보완해 재생하는 처리다. 비율은 은폐한 프레임 수를 전체 재생 프레임 수로 나눈 값이며, 완전한 1초 구간마다 20 ms 프레임 50개를 분모에 포함한다.
+
 두 시나리오의 앱 TX 평균은 모두 27.65 kbps였다. 단순화 MOS proxy는 E1 4.09, E2 1.00이다.
 
 문헌 비교: 2005년 자발적 NAT Check 응답에서는 UDP 홀 펀칭이 310/380 (82%), TCP가 184/286 (64%) NAT 보고에서 호환됐다[7]. 이는 오래된 자기선택 표본의 호환성이지 오늘날 CGNAT 성공률이 아니다. 2022년 공개 5G V2N 측정에서는 mmWave 구간의 STUN 연결 앱 계층 지연이 TURN보다 15% 낮았고, 다른 무선 구간은 대체로 비슷했다[10]. 각 결과는 해당 표본·망에 한정되어 이번 Tor 측정값과 직접 비교할 수 없다.
 
-표의 E1·E2는 각각 3회 통화, 6개 끝점 CSV의 완전한 1초 구간을 합친 값이다. E1은 한 JVM의 두 CallEngine을 메모리 채널로 연결하고 약 4 ms RTT의 LAN 프로파일을 모사했으며, 실제 LAN 측정은 아니다. E2는 한 Linux 호스트에서 독립 JVM 런타임과 Tor 클라이언트 2개가 서로 다른 onion service와 실제 Tor 회로를 사용해 수행했다. Android와 데스크톱 사이의 E2는 수행하지 못해 이 same-host 시험으로 대체했다. 두 실험 모두 440 Hz 시험음을 썼다. *RTT는 각 완전한 1초 구간에 기록된 가장 최근의 일치 PONG 값이다. 새 PONG이 오기 전까지 같은 값이 반복될 수 있으므로 p50/p95는 독립 probe 횟수가 아니다.
+표의 E1·E2는 각각 3회 통화, 6개 끝점 CSV의 완전한 1초 구간을 합친 값이다. E1은 한 JVM의 두 CallEngine을 메모리 채널로 연결하고 약 4 ms RTT의 LAN 프로파일을 모사했으며, 실제 LAN 측정은 아니다. E2는 한 Linux 호스트의 한 JVM 프로세스 안에서 독립 앱 런타임 2개를 실행하고, 별도 Tor 프로세스 2개가 서로 다른 onion service와 실제 Tor 회로를 사용해 수행했다. Android와 데스크톱 사이의 E2는 수행하지 못해 이 same-host 시험으로 대체했다. 두 실험 모두 440 Hz 시험음을 썼다. *RTT는 각 완전한 1초 구간에 기록된 가장 최근의 일치 PONG 값이다. 새 PONG이 오기 전까지 같은 값이 반복될 수 있으므로 p50/p95는 독립 probe 횟수가 아니다.
 
 별도의 headless Android emulator-데스크톱 시험도 연결됐지만 대화 품질은 낮았다. 첫 시험의 양 끝점 RTT p50은 약 13초, 두 번째 시험은 Android 측정이 18초에서 끝났다. 데스크톱의 여섯 연속 1초 구간에는 각 구간에서 가장 최근에 일치한 PONG 값인 52.295초가 반복 기록됐다. 이는 여섯 번의 독립 RTT probe를 뜻하지 않는다. 두 시험은 같은 호스트·NAT에서 했고 사람의 청취는 평가하지 않았다.
 
@@ -89,6 +93,6 @@ Tor가 범죄 전용 기술이라는 인상도 정확하지 않다. SecureDrop�
 5. Tor Project, “The rendezvous protocol,” Tor Rendezvous Specification v3. [Tor Specifications](https://spec.torproject.org/rend-spec/rendezvous-protocol.html)
 6. J.-M. Valin et al., “Definition of the Opus Audio Codec,” RFC 6716, 2012. [IETF RFC 6716](https://datatracker.ietf.org/doc/html/rfc6716)
 7. B. Ford, P. Srisuresh, D. Kegel, “Peer-to-Peer Communication Across Network Address Translators,” USENIX ATC, 2005. [USENIX paper](https://www.usenix.org/conference/2005-usenix-annual-technical-conference/peer-peer-communication-across-network-address)
-8. Freedom of the Press Foundation, “Onion services.” SecureDrop Documentation. [SecureDrop docs](https://docs.securedrop.org/en/stable/glossary.html)
+8. Freedom of the Press Foundation, “Onion Service.” SecureDrop Documentation. [SecureDrop docs](https://docs.securedrop.org/en/stable/glossary.html)
 9. ITU-T, Recommendation G.113, “Transmission impairments due to speech processing,” 09/2024, Appendix IV; Recommendation G.107, “The E-model.” [ITU-T G.113](https://www.itu.int/rec/T-REC-G.113-202409-I/en) · [ITU-T G.107](https://www.itu.int/rec/T-REC-G.107/en)
 10. B. Kihei, T. Davison, M. Okpok, J. Song, “Comparison of V2N STUN/TURN Round Trip Time Performance on a Public 5G Network,” IEEE VTC2022-Fall, 2022. [IEEE Xplore](https://doi.org/10.1109/VTC2022-Fall57202.2022.10012872)
