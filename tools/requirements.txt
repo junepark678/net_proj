@@ -1,2 +1,2 @@
-numpy
+# Optional: statistics and tables use only the Python standard library.
 matplotlib
