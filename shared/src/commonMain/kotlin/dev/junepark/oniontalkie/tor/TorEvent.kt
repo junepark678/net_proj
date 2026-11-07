@@ -43,8 +43,12 @@ internal fun parseEvent(reply: TorReply): TorEvent {
     when (tokens.firstOrNull()) {
         "STATUS_CLIENT" -> return parseBootstrap(tokens.drop(1), reply) ?: TorEvent.Unknown(reply)
         "CIRC" -> if (tokens.size >= 3) {
-            val path = tokens.getOrNull(3)?.takeUnless { '=' in it }
-            return TorEvent.Circuit(tokens[1], tokens[2], path?.split(',').orEmpty(), fields(tokens.drop(3)), reply)
+            // LongName uses either $fingerprint~nickname or $fingerprint=nickname.
+            val path = tokens.getOrNull(3)?.takeIf { it.startsWith('$') || '=' !in it }
+            return TorEvent.Circuit(
+                tokens[1], tokens[2], path?.split(',').orEmpty(),
+                fields(tokens.drop(if (path == null) 3 else 4)), reply,
+            )
         }
         "HS_DESC" -> if (tokens.size >= 5) {
             return TorEvent.HiddenServiceDescriptor(

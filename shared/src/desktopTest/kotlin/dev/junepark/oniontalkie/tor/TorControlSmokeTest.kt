@@ -7,6 +7,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
@@ -42,14 +43,23 @@ class TorControlSmokeTest {
                 val control = TorControl(JvmControlTransport.connect(port = port), this)
                 val phases = mutableListOf<Int>()
                 val bootstrapEvents = mutableListOf<Int>()
+                val completedEvent = CompletableDeferred<Unit>()
                 val progress = launch(start = CoroutineStart.UNDISPATCHED) { control.bootstrap.collect { phases += it } }
                 val events = launch(start = CoroutineStart.UNDISPATCHED) {
-                    control.events.collect { if (it is TorEvent.Bootstrap) bootstrapEvents += it.progress }
+                    control.events.collect {
+                        if (it is TorEvent.Bootstrap) {
+                            bootstrapEvents += it.progress
+                            if (it.progress == 100) completedEvent.complete(Unit)
+                        }
+                    }
                 }
                 try {
                     withTimeout(10_000) { control.authenticate(Files.readAllBytes(cookieFile)) }
                     println("Cookie authentication succeeded; Tor ${control.getInfo("version")}")
-                    withTimeout(180_000) { control.bootstrap.first { it == 100 } }
+                    withTimeout(180_000) {
+                        control.bootstrap.first { it == 100 }
+                        completedEvent.await()
+                    }
                     assertTrue(phases.any { it in 1..99 }, "No intermediate bootstrap progress: $phases")
                     assertTrue(100 in bootstrapEvents, "No 100% STATUS_CLIENT event: $bootstrapEvents")
                     assertEquals(100, control.bootstrap.value)

@@ -93,7 +93,7 @@ class TorControlTest {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { control.events.collect { events += it } }
         val info = async { control.getInfo("version") }
         transport.expect("GETINFO version",
-            "650-CIRC 7 BUILT \$abc~Relay,\$def~Other PURPOSE=GENERAL FUTURE=enabled",
+            "650-CIRC 7 BUILT \$abc=Relay,\$def~Other PURPOSE=GENERAL FUTURE=enabled",
             "650 EXTRA=extension",
             "250-version=0.4.9.12",
             "650 HS_DESC FAILED example NO_AUTH UNKNOWN REASON=NOT_FOUND REPLICA=1",
@@ -103,7 +103,8 @@ class TorControlTest {
         val circuit = assertIs<TorEvent.Circuit>(events[0])
         assertEquals("7", circuit.id)
         assertEquals("BUILT", circuit.status)
-        assertEquals(listOf("\$abc~Relay", "\$def~Other"), circuit.path)
+        assertEquals(listOf("\$abc=Relay", "\$def~Other"), circuit.path)
+        assertEquals(setOf("PURPOSE", "FUTURE"), circuit.fields.keys)
         assertEquals("enabled", circuit.fields["FUTURE"])
         assertEquals(2, circuit.raw.lines.size)
         val descriptor = assertIs<TorEvent.HiddenServiceDescriptor>(events[1])
