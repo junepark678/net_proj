@@ -16,8 +16,18 @@ kotlin {
     jvm("desktop")
 
     sourceSets {
+        commonMain.dependencies {
+            implementation(libs.kotlinx.coroutines.core)
+        }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
+            implementation(libs.kotlinx.coroutines.test)
         }
+        // JDK-only code (java.net, ...) shared by the Android and desktop targets.
+        val jvmShared by creating {
+            dependsOn(commonMain.get())
+        }
+        androidMain.get().dependsOn(jvmShared)
+        getByName("desktopMain").dependsOn(jvmShared)
     }
 }
