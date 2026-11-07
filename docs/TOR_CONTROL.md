@@ -77,10 +77,13 @@ commands. A negative reply alone leaves the session usable if Tor keeps the
 connection open. Tor normally closes it after an authentication failure.
 
 Apply `withTimeout` where needed: no global command timeout is imposed.
-Cancelling an in-flight command closes the connection because its eventual
-reply cannot safely be matched to a later command. Cancelling while waiting
-for the command mutex does not disturb the active command. Cancelling the
-owning scope releases the TCP socket even when its reader is idle.
+Cancelling or timing out a caller leaves the connection and event reader alive.
+An in-flight exchange continues in the client's scope and drains its complete
+reply before admitting the next command. If Tor never replies, later commands
+keep waiting until the client is closed or its owning scope is cancelled.
+Cancelling while waiting for the command mutex does not send that command or
+disturb the active command. Cancelling the owning scope releases the TCP socket
+even when its reader is idle.
 `close()` disconnects the client; only `signal(TorSignal.SHUTDOWN)` requests
 process shutdown. Process launch and onion-service commands belong to their
 own components.
@@ -96,7 +99,7 @@ RFC 4231 HMAC-SHA256 known-answer vectors, SAFECOOKIE handshake vectors, and
 loopback TCP tests (including the raw command API and multi-line replies):
 
 ```sh
-ANDROID_HOME=/home/june/Android/Sdk ./gradlew --no-daemon :shared:testAndroidHostTest :shared:desktopTest
+ANDROID_HOME="$ANDROID_HOME" ./gradlew --no-daemon :shared:testAndroidHostTest :shared:desktopTest
 ```
 
 The desktop smoke test is skipped unless `TOR_CONTROL_SMOKE_BINARY` points at
@@ -110,7 +113,7 @@ Logs remain in the printed temporary directory on failure. It does not
 publish an onion service or use the user's running Tor instance.
 
 ```sh
-ANDROID_HOME=/home/june/Android/Sdk TOR_CONTROL_SMOKE_BINARY=/path/to/tor \
+ANDROID_HOME="$ANDROID_HOME" TOR_CONTROL_SMOKE_BINARY=/path/to/tor \
   ./gradlew :shared:desktopTest --tests '*TorControlSmokeTest' --rerun-tasks
 ```
 

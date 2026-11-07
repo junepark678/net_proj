@@ -276,16 +276,56 @@ class TorControlTest {
         control.close()
     }
 
-    @Test fun commandTimeoutClosesInsteadOfReusingALateReply() = runTest {
+    @Test fun commandTimeoutKeepsTheClientAndEventsUsable() = runTest {
         val transport = TranscriptTransport()
         val control = TorControl(transport, backgroundScope)
+        val events = mutableListOf<TorEvent>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { control.events.collect { events += it } }
         assertFailsWith<kotlinx.coroutines.TimeoutCancellationException> {
             withTimeout(50) { control.getInfo("version") }
         }
-        assertTrue(transport.closed)
-        assertFailsWith<Exception> { control.signal(TorSignal.NEWNYM) }
+        assertFalse(transport.closed)
         assertEquals("GETINFO version", transport.output.receive())
+        val next = async { control.getInfo("version") }
+        transport.feed("250-version=late-value",
+            "650 STATUS_CLIENT NOTICE BOOTSTRAP PROGRESS=50 TAG=loading SUMMARY=\"Loading\"")
+        runCurrent()
+        assertEquals(50, control.bootstrap.value)
         assertTrue(transport.output.tryReceive().isFailure)
+        transport.feed("250 OK")
+        transport.expect("GETINFO version", "250 version=current-value")
+        assertEquals("current-value", next.await())
+        transport.feed("650 STATUS_CLIENT NOTICE BOOTSTRAP PROGRESS=100 TAG=done SUMMARY=\"Done\"")
+        runCurrent()
+        assertEquals(listOf(50, 100), events.filterIsInstance<TorEvent.Bootstrap>().map { it.progress })
+        assertEquals(100, control.bootstrap.value)
+        assertFalse(transport.closed)
+        control.close()
+    }
+
+    @Test fun cancelledCallersDrainCompleteSuccessAndErrorRepliesBeforeTheNextCommand() = runTest {
+        for (code in listOf(250, 552)) {
+            val transport = TranscriptTransport()
+            val control = TorControl(transport, backgroundScope)
+            val cancelled = async { control.command("GETINFO test/data") }
+            assertEquals("GETINFO test/data", transport.output.receive())
+            transport.feed("$code+test/data=", "partial data")
+            runCurrent()
+            cancelled.cancel()
+            cancelled.join()
+            assertFalse(transport.closed)
+            val next = async { control.getInfo("version") }
+            runCurrent()
+            assertTrue(transport.output.tryReceive().isFailure)
+            transport.feed("..dot", ".", "$code-still draining")
+            runCurrent()
+            assertTrue(transport.output.tryReceive().isFailure)
+            transport.feed("$code " + if (code == 250) "OK" else "Unknown key")
+            transport.expect("GETINFO version", "250-version=own-reply", "250 OK")
+            assertEquals("own-reply", next.await())
+            assertFalse(transport.closed)
+            control.close()
+        }
     }
 
     @Test fun cancellingAQueuedCommandDoesNotCloseTheActiveOne() = runTest {
@@ -300,6 +340,8 @@ class TorControlTest {
         assertFalse(transport.closed)
         transport.feed("250 version=ok")
         assertEquals("ok", active.await())
+        runCurrent()
+        assertTrue(transport.output.tryReceive().isFailure)
         control.close()
     }
 

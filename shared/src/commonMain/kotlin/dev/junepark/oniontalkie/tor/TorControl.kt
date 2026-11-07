@@ -2,8 +2,12 @@ package dev.junepark.oniontalkie.tor
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -14,14 +18,13 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /** Signals exposed by the control client. NEWNYM remains subject to Tor's rate limiting. */
 enum class TorSignal { NEWNYM, SHUTDOWN }
 
 /** Cookie-authenticated Tor control-port client. Construct with a fresh transport and an owned
  * coroutine scope. Cancelling that scope or calling [close] releases the transport. Commands
- * are serialized; cancelling an in-flight command closes the connection to preserve framing.
+ * are serialized; a cancelled caller's in-flight reply is drained before the next command.
  * Callers can apply withTimeout to commands. No password or unauthenticated login is supported.
  */
 class TorControl internal constructor(
@@ -32,6 +35,7 @@ class TorControl internal constructor(
     constructor(transport: ControlTransport, scope: CoroutineScope) : this(transport, scope, ::secureControlNonce)
 
     private val lifetime = SupervisorJob(scope.coroutineContext[kotlinx.coroutines.Job])
+    private val clientScope = CoroutineScope(scope.coroutineContext + lifetime)
     private val replies = Channel<TorReply>(1)
     private val commandMutex = Mutex()
     private val mutableBootstrap = MutableStateFlow(0)
@@ -47,7 +51,7 @@ class TorControl internal constructor(
     val events: SharedFlow<TorEvent> = mutableEvents.asSharedFlow()
 
     init {
-        val readerJob = CoroutineScope(scope.coroutineContext + lifetime).launch {
+        val readerJob = clientScope.launch {
             try {
                 val reader = ReplyReader(transport)
                 while (true) {
@@ -85,7 +89,7 @@ class TorControl internal constructor(
      */
     suspend fun authenticate(cookie: ByteArray) {
         require(cookie.size == 32) { "Tor authentication cookies must contain exactly 32 bytes" }
-        commandMutex.withLock {
+        withCommandLock {
             try {
                 val auth = authFields(exchange("PROTOCOLINFO 1"), "AUTH")
                 val methods = auth["METHODS"]?.split(',').orEmpty()
@@ -151,7 +155,23 @@ class TorControl internal constructor(
         require(line.isNotBlank() && '\r' !in line && '\n' !in line) {
             "A control command must be a nonblank single line without CR or LF"
         }
-        return commandMutex.withLock { exchange(line) }
+        return withCommandLock { exchange(line) }
+    }
+
+    private suspend fun <T> withCommandLock(block: suspend () -> T): T {
+        // Waiting for admission remains cancellable by the caller. Once admitted, the
+        // client owns the mutex until the complete reply (or auth handshake) is consumed.
+        commandMutex.lock()
+        val pending = clientScope.async(start = CoroutineStart.UNDISPATCHED) {
+            try { block() } finally { commandMutex.unlock() }
+        }
+        return try {
+            pending.await()
+        } catch (failure: CancellationException) {
+            currentCoroutineContext().ensureActive()
+            throw replies.tryReceive().exceptionOrNull()
+                ?: TorConnectionClosedException("Tor control connection was closed", failure)
+        }
     }
 
     // Caller holds commandMutex, including across the entire authentication handshake.
