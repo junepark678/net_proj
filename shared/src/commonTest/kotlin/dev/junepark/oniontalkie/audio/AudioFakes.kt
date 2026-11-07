@@ -81,3 +81,23 @@ class FakeOpusCodec(
         return out.size
     }
 }
+
+/** Bit-exact signed PCM transport for testing loopback independently of codec loss. */
+class PassthroughPcmCodec : OpusCodec {
+    override fun encode(pcm: ShortArray): ByteArray = ByteArray(pcm.size * 2).also { packet ->
+        pcm.forEachIndexed { i, sample ->
+            packet[2 * i] = sample.toByte()
+            packet[2 * i + 1] = (sample.toInt() shr 8).toByte()
+        }
+    }
+
+    override fun decode(packet: ByteArray?, out: ShortArray): Int {
+        requireNotNull(packet)
+        require(packet.size == out.size * 2)
+        out.indices.forEach { i ->
+            out[i] = ((packet[2 * i].toInt() and 0xff) or
+                ((packet[2 * i + 1].toInt() and 0xff) shl 8)).toShort()
+        }
+        return out.size
+    }
+}

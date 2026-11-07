@@ -18,6 +18,12 @@ data class AudioFrame(val seq: Int, val tsMs: Long, val pcm: ShortArray) {
         require(tsMs >= 0) { "Timestamp must be nonnegative" }
         require(pcm.size == AudioFormat.SAMPLES_PER_FRAME) { "Expected 960 PCM samples" }
     }
+
+    override fun equals(other: Any?): Boolean =
+        this === other || (other is AudioFrame &&
+            seq == other.seq && tsMs == other.tsMs && pcm.contentEquals(other.pcm))
+
+    override fun hashCode(): Int = 31 * (31 * seq + tsMs.hashCode()) + pcm.contentHashCode()
 }
 
 /**
