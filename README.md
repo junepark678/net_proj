@@ -74,8 +74,8 @@ All dependency versions live in `gradle/libs.versions.toml`. Kotlin 2.4.21 is
 the current stable release. AGP 8.13.2 retains support for Build Tools 35.0.0;
 Compose 1.11.1 and Activity Compose 1.10.1 retain compatibility with compileSdk
 35. Newer Compose and Activity releases require a newer compile SDK. The
-coroutines, serialization and kotlinx-io versions are catalog pins only;
-the scaffold does not add those unused libraries to any module.
+metrics logger uses coroutines for sampling/StateFlow and kotlinx-io for local
+call files; serialization remains a catalog pin until a module needs it.
 See the [Kotlin compatibility guide](https://kotlinlang.org/docs/multiplatform/multiplatform-compatibility-guide.html),
 [Compose version mapping](https://kotlinlang.org/docs/multiplatform/compose-compatibility-and-versioning.html)
 and [AGP 8.13 requirements](https://developer.android.com/build/releases/agp-8-13-0-release-notes)
