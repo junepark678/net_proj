@@ -23,6 +23,7 @@ SCENARIOS = ('E1_lan_loopback', 'E2_same_nat_tor', 'E3_cgnat_tor')
 REQUIRED = ('t_s', 'rtt_ms', 'jitter_ms', 'loss_pct', 'late', 'plc', 'buffer_ms',
             'tx_kbps', 'rx_kbps', 'circuit_id', 'hops')
 MOS_LABEL = 'simplified E-model (proxy/custom Ie/Bpl)'
+FIGURES = ('rtt_timeseries.png', 'jitter_cdf.png')
 # ITU-T G.113 (2024), Transmission impairments due to speech processing,
 # Appendix IV Table IV.4: G.722.2 23.85 kbps, diotic, uniform loss.
 DEFAULT_IE = 10.0
@@ -94,6 +95,9 @@ def main():
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    # Never leave figures from an earlier run beside a freshly written summary.
+    for name in FIGURES:
+        (out/name).unlink(missing_ok=True)
     keys = ('mean_rtt_ms', 'p50_rtt_ms', 'p95_rtt_ms', 'mean_jitter_ms',
             'p50_jitter_ms', 'p95_jitter_ms', 'loss_pct', 'plc_rate',
             'mean_buffer_ms', 'mean_tx_kbps', 'mean_rx_kbps', 'estimated_mos')
@@ -154,7 +158,7 @@ def main():
             axis.set_ylabel(y)
             axis.grid(True, linewidth=.35)
             axis.legend(fontsize=7, ncol=3, handlelength=2, columnspacing=.8)
-        for figure, name in ((fig, 'rtt_timeseries.png'), (cdf, 'jitter_cdf.png')):
+        for figure, name in zip((fig, cdf), FIGURES):
             figure.tight_layout()
             figure.savefig(out/name, dpi=300)
             plt.close(figure)

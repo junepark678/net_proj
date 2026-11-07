@@ -170,6 +170,26 @@ class ReportStatsTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('zero usable rows', result.stderr)
 
+    def test_stale_figures_removed_without_matplotlib(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Path(d) / 'E1_lan_loopback'
+            data.mkdir()
+            path = data / 'a.csv'
+            with path.open('w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(stats.REQUIRED)
+                writer.writerow([0, 40, 2, 0, 0, 2, 10, 24, 20, 'x', 1])
+            out = Path(d) / 'out'
+            out.mkdir()
+            for name in stats.FIGURES:
+                (out / name).write_bytes(b'stale')
+            result = self.invoke([path], out, no_packages=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('matplotlib unavailable', result.stderr)
+            for name in stats.FIGURES:
+                self.assertFalse((out / name).exists(), name)
+            self.assertTrue((out / 'summary.json').exists())
+
     def test_help_without_optional_imports(self):
         result = subprocess.run([sys.executable, '-I', '-S', str(SCRIPT), '--help'],
                                 capture_output=True, text=True)
