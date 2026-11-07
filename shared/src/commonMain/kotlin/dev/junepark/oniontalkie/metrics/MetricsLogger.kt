@@ -73,10 +73,14 @@ class MetricsLogger(
     }
 
     private val sampler = scope.launch {
+        // Schedule against fixed deadlines so sink write latency never skips a
+        // second; a slow write is followed by a shorter sleep, not a drifted one.
+        var deadlineMs = startedMs + SAMPLE_INTERVAL_MS
         while (isActive) {
-            delay(1_000)
+            delay((deadlineMs - clockMs()).coerceAtLeast(0))
             val snapshot = mutex.withLock { if (closed) null else sample(clockMs()) }
             snapshot?.let { sink.appendCsv(it.toCsv() + "\n") }
+            deadlineMs += SAMPLE_INTERVAL_MS
         }
     }
 
@@ -97,6 +101,7 @@ class MetricsLogger(
         previousSenderMs = senderTimestampMs
         previousArrivalMs = arrivalMs
         recordSequence(sequence)
+        true
     }
 
     /** Records the u32 PING token and local [sentMs] before locking; keeps 64 probes. */
@@ -104,14 +109,15 @@ class MetricsLogger(
         require(timestampMs in 0..UINT32_MASK)
         pendingPings[timestampMs] = sentMs
         if (pendingPings.size > 64) pendingPings.remove(pendingPings.keys.first())
+        false // A pending probe is bookkeeping, not a measurement.
     }
 
     /** Matches a PONG using its pre-lock [arrivalMs]. Unknown/duplicate echoes are ignored. */
     suspend fun onPong(echoedTimestampMs: Long, arrivalMs: Long = clockMs()) = update {
         require(echoedTimestampMs in 0..UINT32_MASK)
-        pendingPings.remove(echoedTimestampMs)?.let { sentMs ->
-            rttMs = (arrivalMs - sentMs).toDouble()
-        }
+        val sentMs = pendingPings.remove(echoedTimestampMs) ?: return@update false
+        rttMs = (arrivalMs - sentMs).toDouble()
+        true
     }
 
     /**
@@ -123,14 +129,17 @@ class MetricsLogger(
         require(sent >= 0 && received >= 0)
         txBytes += sent
         rxBytes += received
+        sent > 0 || received > 0
     }
 
     /** Adds jitter-buffer discard/PLC events and replaces the current delay. */
     suspend fun onPlayout(bufferMs: Double, late: Long = 0, plc: Long = 0) = update {
         require(bufferMs.isFinite() && bufferMs >= 0 && late >= 0 && plc >= 0)
+        val changed = this.bufferMs != bufferMs || late > 0 || plc > 0
         this.bufferMs = bufferMs
         this.late += late
         this.plc += plc
+        changed
     }
 
     /**
@@ -141,11 +150,14 @@ class MetricsLogger(
      */
     suspend fun onCircuitStatus(circuitId: String?, response: String?) = update {
         require(circuitId == null || Regex("[0-9]+").matches(circuitId))
-        this.circuitId = circuitId
-        hops = response?.lineSequence()?.map { it.trim().split(Regex("\\s+")) }
+        val newHops = response?.lineSequence()?.map { it.trim().split(Regex("\\s+")) }
             ?.firstOrNull { it.size >= 3 && it[0] == circuitId && it[1] == "BUILT" }
             ?.get(2)?.takeUnless { '=' in it && !it.startsWith('$') }
             ?.split(',')?.takeIf { path -> path.all { it.isNotEmpty() } }?.size
+        val changed = this.circuitId != circuitId || hops != newHops
+        this.circuitId = circuitId
+        hops = newHops
+        changed
     }
 
     /** Stops sampling and persists the final interval/summary. Safe to repeat. */
@@ -173,10 +185,10 @@ class MetricsLogger(
         }
     }
 
-    private suspend fun update(block: () -> Unit) = mutex.withLock {
+    /** [block] returns true when it changed measured state; only then is a final interval owed. */
+    private suspend fun update(block: () -> Boolean) = mutex.withLock {
         check(!closed) { "Metrics logger is closed" }
-        block()
-        dirty = true
+        if (block()) dirty = true
     }
 
     private fun recordSequence(sequence: Int) {
@@ -242,6 +254,7 @@ class MetricsLogger(
     }
 }
 
+private const val SAMPLE_INTERVAL_MS = 1_000L
 private const val UINT32_MASK = 0xffff_ffffL
 
 private fun signedDelta(current: Long, previous: Long, bits: Int): Long {

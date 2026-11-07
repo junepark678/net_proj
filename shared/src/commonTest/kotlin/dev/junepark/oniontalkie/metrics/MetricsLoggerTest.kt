@@ -326,6 +326,43 @@ class MetricsLoggerTest {
     }
 
     @Test
+    fun slowSinkWritesDoNotSkipSampleSeconds() = runTest {
+        // Each row write "costs" 400 ms of wall-clock time that the virtual
+        // scheduler never sees; a fixed-deadline sampler still lands on every
+        // whole second instead of drifting past some of them.
+        var writeCostMs = 0L
+        val sink = object : MemoryMetricsSink() {
+            override fun appendCsv(text: String) {
+                super.appendCsv(text)
+                if (text != MetricsLogger.CSV_HEADER + "\n") writeCostMs += 400
+            }
+        }
+        val logger = MetricsLogger(sink, backgroundScope) { testScheduler.currentTime + writeCostMs }
+        advanceTimeBy(5_000)
+        runCurrent()
+        val seconds = sink.csv.lines().drop(1).filter { it.isNotEmpty() }.map { it.substringBefore(',').toInt() }
+        assertEquals((1..seconds.size).toList(), seconds)
+        assertTrue(seconds.size >= 5)
+        logger.close()
+    }
+
+    @Test
+    fun bookkeepingOnlyEventsDoNotProduceAPartialFinalRow() = runTest {
+        val sink = MemoryMetricsSink()
+        val logger = logger(sink)
+        advanceTimeBy(1_000)
+        runCurrent()
+        logger.onPingSent(9, sentMs = 1_000)
+        logger.onPong(42) // Unknown echo: nothing measured.
+        logger.onTransportBytes(sent = 0, received = 0)
+        logger.onPlayout(0.0, late = 0, plc = 0) // Unchanged buffer, no events.
+        logger.onCircuitStatus(null, null)
+        logger.close()
+        assertEquals(2, sink.csv.lines().count { it.isNotEmpty() })
+        assertTrue(sink.summary!!.contains("\"samples\": 1"))
+    }
+
+    @Test
     fun missingCircuitDataClearsHopsAndNeverSelectsAnUnrelatedCircuit() = runTest {
         val logger = logger()
         logger.onCircuitStatus("7", "7 BUILT \$aaa~one,\$bbb=two,\$ccc PURPOSE=HS_CLIENT_REND")
@@ -395,14 +432,14 @@ class MetricsLoggerTest {
         MetricsLogger(sink, backgroundScope) { testScheduler.currentTime }
 }
 
-internal class MemoryMetricsSink : MetricsSink {
+internal open class MemoryMetricsSink : MetricsSink {
     val csv = StringBuilder()
     var summary: String? = null
     var summaryWrites = 0
     var closes = 0
     val closed get() = closes > 0
 
-    override fun appendCsv(text: String) { csv.append(text) }
+    override open fun appendCsv(text: String) { csv.append(text) }
     override fun writeSummary(json: String) {
         summary = json
         summaryWrites++
