@@ -16,6 +16,10 @@ kotlin {
     jvm("desktop")
 
     sourceSets {
+        commonMain.dependencies {
+            api(libs.kotlinx.coroutines.core)
+            api(libs.kotlinx.io.core)
+        }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }
