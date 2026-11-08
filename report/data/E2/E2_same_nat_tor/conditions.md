@@ -2,7 +2,7 @@
 
 - Date: 2026-11-07 UTC.
 - Trials: three calls of approximately 120 seconds; both endpoints are archived separately with their CSV and `summary.json` sidecar.
-- Endpoints: two production `CallEngine` instances in separate local runtimes on one Linux x86_64 host. Each runtime launched an independent Tor client and published an onion service; calls used those services over Tor.
+- Endpoints: two production `CallEngine` instances in independent app runtimes within one JVM process on a Linux x86_64 host. Each runtime launched a separate Tor process and published its own onion service; calls used those services over real Tor circuits.
 - Network: both clients shared the same host and outbound internet connection, so this approximates two clients behind one NAT. The experiment did not use separate devices, access networks, or a controlled NAT testbed. No synthetic delay or loss profile was applied.
 - Media: production mono Opus at 24 kbps, 20 ms frames, deterministic 440 Hz test tone, no FEC.
 - Host: Linux x86_64, kernel `7.2.12-gentoo-dist-hardened`, Intel Core i5-14600K.

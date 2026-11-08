@@ -28,8 +28,8 @@ The high RTT and PLC counts make this a connected-call result, not evidence of c
 - Direction and pairing: Android initiated using a manually entered pairing payload; the desktop simulator auto-accepted. QR scanning, reverse direction, and glare were not exercised.
 - Media: the desktop transmitted a deterministic 440 Hz test tone and the emulator used its app audio-input path. No human listening evaluation or audio recording was made.
 - Desktop Tor bootstrap: 12.208 seconds. Desktop accepted the call and reached InCall 2.085 seconds later. Android bootstrap was complete before dialing; its elapsed time was not retained.
-- Android metrics: 18 unique one-second samples through `t_s=18`; zero RTT samples, 771 PLC frames, mean TX 26.52 kbps, mean RX 3.68 kbps. Received bitrate was zero for most samples after the initial seconds.
-- Desktop metrics: 60 one-second samples; six consecutive rows repeated the latest matched PONG value (52,295 ms), not six independent RTT probes; 2,993 PLC frames, mean TX 27.62 kbps, mean RX 3.69 kbps. The desktop simulator ran for 60 seconds.
+- Android metrics: 18 unique one-second samples through `t_s=18`; zero RTT samples and 771 PLC frames after excluding the duplicate final-flush row at `t_s=18` (23 PLC frames; raw CSV sum 794). Mean TX was 26.52 kbps and mean RX 3.68 kbps. Received bitrate was zero for most samples after the initial seconds.
+- Desktop metrics: 60 unique one-second intervals; each interval from `t_s=55` through `t_s=60` repeated the latest matched PONG value (52,295 ms), not six independent RTT probes. The raw CSV also has a duplicate final-flush row at `t_s=60`, so the value appears in seven rows. PLC totaled 2,993 frames; mean TX was 27.62 kbps and mean RX 3.69 kbps. The desktop simulator ran for 60 seconds.
 
 `loss_pct` is the interval percentage of missing application AUDIO sequence numbers, not IP packet loss or TCP retransmissions. `rtt_ms` records the latest matched PONG in each complete one-second interval, so a value may repeat across rows until a new PONG arrives.
 

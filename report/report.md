@@ -4,13 +4,13 @@ subtitle: "STUN 홀 펀칭과 Tor onion service의 비교"
 date: "컴퓨터네트워크 심화연구보고서 · 2026년 11월"
 lang: ko-KR
 mainfont: "NanumBarunGothic"
-fontsize: 11pt
+fontsize: 10pt
 geometry:
   - a4paper
-  - top=17mm
-  - bottom=17mm
-  - left=18mm
-  - right=18mm
+  - top=10mm
+  - bottom=10mm
+  - left=12mm
+  - right=12mm
 header-includes:
   - \usepackage{fontspec}
   - \usepackage{graphicx}
@@ -27,10 +27,10 @@ TEXMFCNF=/usr/share/texmf-dist/web2c pandoc report/report.md --resource-path=rep
 
 \newpage
 
-그림 1은 PAT 뒤의 직접 연결, TURN 서버 중계, Tor rendezvous가 서로 다른 경로라는 점을 요약한다. 그림 속 Tor 경로는 홀 펀칭이 아니라 양 끝이 시작한 회로를 릴레이가 잇는 방식이다.
+그림 1은 PAT 뒤의 직접 연결, TURN 중계, Tor rendezvous를 비교한다.
 
 \begin{center}
-\includegraphics[width=9.5cm]{report/figures/fig1_traversal.png}
+\includegraphics[width=13cm]{report/figures/fig1_traversal.png}
 
 \textbf{그림 1.} PAT 환경의 직접 연결, TURN 중계, Tor onion-service rendezvous 경로 비교
 \end{center}
@@ -39,11 +39,15 @@ TEXMFCNF=/usr/share/texmf-dist/web2c pandoc report/report.md --resource-path=rep
 
 ## 1. 탐구 동기
 
-집이나 학교의 여러 기기는 하나의 공인 IPv4 주소를 나누어 인터넷에 접속한다. 웹 접속은 잘 되는데, 왜 외부 친구가 내 기기에 먼저 전화를 걸기는 어려울까? 이번 탐구에서는 PAT가 연결을 어떻게 관리하는지 살펴보고, 직접 경로를 찾는 STUN/ICE와 중계 경로를 쓰는 TURN 및 Tor를 비교했다. Tor를 이용한 통화가 언제 의미 있고 언제 맞지 않는지도 실제 앱의 측정 자료로 확인했다.
+집과 학교에서는 여러 기기가 한 공인 IPv4 주소를 공유한다. 웹은 되는데 외부에서 먼저 전화를 걸기 어려운 이유는 무엇일까? 이 탐구는 PAT 동작과 STUN/ICE 직접 연결, TURN·Tor 중계를 비교하고 Tor 통화의 한계를 앱 측정으로 살펴본다.
 
 ## 2. 개념 정리: PAT와 세 가지 경로
 
-PAT(Port Address Translation)는 여러 사설 주소와 포트를 하나의 공인 주소와 여러 포트로 변환한다. RFC 3022는 여러 내부 주소를 하나의 외부 주소와 포트로 변환하는 방식을 Network Address Port Translation (NAPT)이라고 부른다. 내부 기기가 외부 서버에 패킷을 보내면 공유기는 출발지 주소·포트의 대응 상태를 기록하고, 응답을 원래 기기로 되돌린다. 외부에서 먼저 도착한 연결 요청은 이에 대응하는 상태가 없어서 목적지를 정하기 어렵다. 이것은 “NAT 자체가 방화벽”이라는 뜻은 아니다. PAT의 주소·포트 매핑이 사전 연결 없이 들어오는 통신을 막는 핵심 이유다 [1].
+PAT(Port Address Translation)는 여러 사설 주소와 포트를 하나의 공인 주소와 여러 포트로 변환한다. RFC 3022는 여러 내부 주소를 하나의 외부 주소와 포트로 변환하는 방식을 Network Address Port Translation (NAPT)이라고 부른다.
+
+내부 기기가 외부 서버에 패킷을 보내면 공유기는 출발지 주소·포트의 대응 상태를 기록하고, 응답을 원래 기기로 되돌린다. 외부에서 먼저 도착한 연결 요청은 이에 대응하는 상태가 없어서 목적지를 정하기 어렵다. 이것은 “NAT 자체가 방화벽”이라는 뜻은 아니다.
+
+PAT의 주소·포트 매핑이 사전 연결 없이 들어오는 통신을 막는 핵심 이유다 [1].
 
 STUN은 외부에서 관찰되는 주소와 포트를 알아내고 연결성을 검사하는 도구이지, 단독 NAT 통과 해법은 아니다 [2]. ICE는 양쪽의 주소 후보를 교환하고 연결성을 검사한다. 직접 후보가 성공하면 NAT가 허용하는 범위에서 두 기기가 서로 먼저 패킷을 보내 매핑을 만들고 통신할 수 있는데, 이를 홀 펀칭이라고 한다 [3, 7]. NAT 동작이나 방화벽 정책에 따라 직접 경로가 만들어지지 않을 수 있다.
 
