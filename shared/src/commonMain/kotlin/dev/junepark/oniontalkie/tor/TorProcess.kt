@@ -1,6 +1,9 @@
 package dev.junepark.oniontalkie.tor
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 
 /** Paths and deadlines for one private Tor client. Pass an explicit executable on Android. */
 data class TorConfig(
@@ -63,6 +66,24 @@ expect class TorProcess(config: TorConfig) {
 
     /** Stops and reaps Tor. Safe to call more than once. */
     suspend fun stop()
+}
+
+/** Collects bootstrap progress until either the authenticated control connection or Tor process
+ * exits. Tor log contents are intentionally not interpreted here; their stream closure signals
+ * that the process stopped producing output. */
+suspend fun TorControl.collectBootstrapUntilTorTerminates(
+    processLogs: Flow<TorLogLine>,
+    onBootstrap: suspend (Int) -> Unit,
+) = coroutineScope {
+    launch {
+        processLogs.collect { }
+        throw TorProcessException("Tor process exited unexpectedly")
+    }
+    launch {
+        val cause = awaitTermination()
+        throw TorProcessException("Tor control connection terminated", cause)
+    }
+    bootstrap.collect(onBootstrap)
 }
 
 /** Readable alias for callers that prefer the longer name. */

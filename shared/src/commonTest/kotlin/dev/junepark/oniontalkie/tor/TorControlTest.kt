@@ -13,6 +13,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
@@ -82,6 +83,30 @@ class TorControlTest {
         transport.expect("GETINFO status/bootstrap-phase", "250-status/bootstrap-phase=NOTICE BOOTSTRAP PROGRESS=100 TAG=done SUMMARY=\"Done\"", "250 OK")
         auth.await()
         assertEquals(100, control.bootstrap.value)
+        control.close()
+    }
+
+    @Test fun controlReaderTerminationCanBeAwaited() = runTest {
+        val transport = TranscriptTransport()
+        val control = TorControl(transport, backgroundScope)
+        val ended = backgroundScope.async { control.awaitTermination() }
+
+        transport.input.close()
+        runCurrent()
+
+        assertIs<TorConnectionClosedException>(ended.await())
+        assertTrue(transport.closed)
+    }
+
+    @Test fun closedProcessLogStreamFailsBootstrapCollection() = runTest {
+        val control = TorControl(TranscriptTransport(), backgroundScope)
+        val observer = backgroundScope.async {
+            control.collectBootstrapUntilTorTerminates(emptyFlow()) { }
+        }
+        runCurrent()
+
+        val failure = assertFailsWith<TorProcessException> { observer.await() }
+        assertEquals("Tor process exited unexpectedly", failure.message)
         control.close()
     }
 

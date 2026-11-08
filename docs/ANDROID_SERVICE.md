@@ -9,3 +9,5 @@ The idle notification uses a low-importance channel; an active call uses a defau
 The Home screen offers an optional battery-optimization exemption. It explains the effect first and only opens the Android system request after the user taps the action; the user can decline. This may improve availability on devices with aggressive background restrictions, but it cannot guarantee delivery across every vendor's power-management policy.
 
 The service does not autostart at boot. Tor starts only through the visible app's online action, and stops through the app or its persistent notification.
+
+The service watches both Tor's authenticated control connection and process output. If either ends unexpectedly, it releases the call/Tor resources and reports **Failed**; the online action remains available to retry.

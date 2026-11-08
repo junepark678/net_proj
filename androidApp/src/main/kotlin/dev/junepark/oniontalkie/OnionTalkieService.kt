@@ -23,6 +23,7 @@ import dev.junepark.oniontalkie.tor.JvmControlTransport
 import dev.junepark.oniontalkie.tor.TorConfig
 import dev.junepark.oniontalkie.tor.TorControl
 import dev.junepark.oniontalkie.tor.TorProcess
+import dev.junepark.oniontalkie.tor.collectBootstrapUntilTorTerminates
 import dev.junepark.oniontalkie.tor.forAndroid
 import dev.junepark.oniontalkie.ui.AppPresenceState
 import java.nio.file.Files
@@ -117,7 +118,7 @@ class OnionTalkieService : Service() {
             val config = TorConfig.forAndroid(applicationContext)
             val process = TorProcess(config)
             torProcess = process
-            process.start()
+            val processLogs = process.start()
 
             val transport = withTimeout(CONTROL_CONNECT_TIMEOUT_MILLIS) {
                 JvmControlTransport.connect(port = process.controlPort)
@@ -127,7 +128,7 @@ class OnionTalkieService : Service() {
             val cookiePath = Paths.get(config.dataDir, CONTROL_COOKIE_FILE)
             val cookie = withContext(Dispatchers.IO) { Files.readAllBytes(cookiePath) }
             control.authenticate(cookie)
-            control.bootstrap.collect { progress ->
+            control.collectBootstrapUntilTorTerminates(processLogs) { progress ->
                 if (progress >= BOOTSTRAP_COMPLETE && callRuntime == null) {
                     val runtime = JvmOnionCallRuntime.open(
                         control = control,
@@ -175,7 +176,6 @@ class OnionTalkieService : Service() {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 foreground = false
             }
-            stopSelf()
         }
     }
 

@@ -46,6 +46,12 @@ events for slow collectors and drops the oldest on overflow so logging cannot
 block replies. Collect before authentication to observe its initial events.
 Unknown statuses, fields and events retain their raw replies for consumers.
 
+`awaitTermination()` suspends until the reader observes EOF/failure or the
+control client is closed, then returns the terminal cause. Lifecycle owners
+should observe this alongside the Tor process log flow; the process flow closes
+when Tor exits. `collectBootstrapUntilTorTerminates` combines both signals with
+bootstrap collection and fails when either Tor resource ends unexpectedly.
+
 Commands are serialized, with an independent event reader. Replies support
 space, `-` continuation and `+` data lines, dot unescaping, 250/251 success,
 and negative replies. `getInfo` normalizes data blocks to LF without a final

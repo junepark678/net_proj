@@ -24,7 +24,9 @@ data class JitterBufferMetrics(
  * surrounding decoded audio is quiet enough that skipping one encoded frame is unobtrusive.
  *
  * The initial output waits until the target span is buffered. Thereafter, missing sequence numbers
- * produce PLC, late frames are discarded, and queue growth is bounded by [maxMs]. The buffer uses
+ * produce PLC, late frames are discarded, and queue growth is bounded by [maxMs]. Sustained
+ * underruns return the playout cursor to a bounded re-priming phase, allowing later arrivals to
+ * establish a fresh cursor. The buffer uses
  * unsigned 16-bit wraparound arithmetic and keeps only 5 seconds of inter-arrival deviation
  * samples. [metricsListener] is invoked synchronously after each accepted/discarded frame or pull.
  *
@@ -56,6 +58,7 @@ class JitterBuffer(
     private var lastLateMs: Long? = null
     private var lastDecayMs = 0L
     private var lastNonQuietDropMs: Long? = null
+    private var consecutiveUnderruns = 0
 
     private var lateCount = 0L
     private var plcCount = 0L
@@ -129,9 +132,24 @@ class JitterBuffer(
 
         val sequence = nextSequence!!
         val packet = packets.remove(sequence)
-        if (packet == null) plcCount++
+        if (packet == null) {
+            plcCount++
+            consecutiveUnderruns++
+        } else {
+            consecutiveUnderruns = 0
+        }
         nextSequence = sequence + 1
-        maybeDropForCatchUp(now, silenceLike)
+        if (consecutiveUnderruns >= REBUFFER_UNDERRUN_TICKS) {
+            // Keep any future packets, but allow the next arriving in-order packet to become the
+            // start of a fresh buffer. This prevents every packet after a latency jump from being
+            // discarded against a cursor that advanced while the stream was empty.
+            anchorSequence = (sequence + 1).toInt()
+            nextSequence = null
+            firstBufferedSequence = packets.keys.minOrNull()
+            consecutiveUnderruns = 0
+        } else {
+            maybeDropForCatchUp(now, silenceLike)
+        }
         pruneSeen()
         publishMetrics()
         return packet
@@ -246,6 +264,7 @@ class JitterBuffer(
         private const val FRAME_DURATION_MS = AudioFormat.FRAME_DURATION_MS
         private const val JITTER_WINDOW_MS = 5_000L
         private const val DECAY_INTERVAL_MS = 1_000L
+        private const val REBUFFER_UNDERRUN_TICKS = 3
         private const val NON_QUIET_DROP_INTERVAL_MS = 2_000L
         private const val SEEN_HISTORY_FRAMES = 32_768L
         private const val SEQUENCE_MASK = 0xffff

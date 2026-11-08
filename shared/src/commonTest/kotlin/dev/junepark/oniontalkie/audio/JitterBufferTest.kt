@@ -41,25 +41,34 @@ class JitterBufferTest {
     }
 
     @Test
-    fun torLikeBurstOfLateFramesRaisesDelayAndCountsPlc() {
+    fun sustainedUnderrunRebuffersAndRecoversFromTorLikeLatencyJump() {
         val clock = ManualClock()
         val buffer = JitterBuffer(clockMs = { clock.nowMs })
         prime(buffer, clock)
 
-        // A 300 ms delivery pause while the 20 ms playout clock continues.
-        repeat(15) {
+        // Drain the primed frames, then simulate a delivery pause. The first two late frames raise
+        // the target; the third sustained underrun resets the cursor before later frames arrive.
+        for (sequence in 1..2) {
+            clock.nowMs += 20
+            assertTrue(buffer.pull() != null)
+        }
+        for (sequence in 3..5) {
             clock.nowMs += 20
             buffer.pull()
+            buffer.put(frame(sequence))
+        }
+        for (sequence in 6..9) {
+            clock.nowMs += 20
+            buffer.put(frame(sequence))
         }
 
-        // The delayed TCP burst is already behind the playout cursor. Discarding it must adapt
-        // future buffering upward so a subsequent burst has more room.
-        for (sequence in 3..15) buffer.put(frame(sequence))
-
-        assertEquals(13L, buffer.metrics.late)
-        assertTrue(buffer.metrics.plc >= 13)
-        assertTrue(buffer.metrics.targetDelayMs >= 300)
+        // The first two packets arrived behind the old cursor and raised the target. The remaining
+        // burst arrives after re-priming began and must be buffered instead of discarded forever.
+        assertEquals(2L, buffer.metrics.late)
+        assertTrue(buffer.metrics.plc >= 3)
+        assertTrue(buffer.metrics.targetDelayMs > JitterBuffer.DEFAULT_MIN_MS)
         assertTrue(buffer.metrics.targetDelayMs <= 1_500)
+        assertEquals(5, payloadSequence(buffer.pull()))
     }
 
     @Test

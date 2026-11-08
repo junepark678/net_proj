@@ -15,6 +15,7 @@ import dev.junepark.oniontalkie.tor.JvmControlTransport
 import dev.junepark.oniontalkie.tor.TorConfig
 import dev.junepark.oniontalkie.tor.TorControl
 import dev.junepark.oniontalkie.tor.TorProcess
+import dev.junepark.oniontalkie.tor.collectBootstrapUntilTorTerminates
 import dev.junepark.oniontalkie.ui.OnionDialViewModel
 import dev.junepark.oniontalkie.ui.AppPresenceState
 import dev.junepark.oniontalkie.ui.AudioDeviceOption
@@ -111,13 +112,13 @@ class DesktopTorController : OnionDialViewModel, AutoCloseable {
             val config = TorConfig(dataDir = Paths.get(appDataDir(), "tor").toString())
             val launched = TorProcess(config)
             process = launched
-            launched.start()
+            val processLogs = launched.start()
 
             val connected = TorControl(JvmControlTransport.connect(port = launched.controlPort), scope)
             control = connected
             val cookiePath = Paths.get(config.dataDir, "control_auth_cookie")
             connected.authenticate(Files.readAllBytes(cookiePath))
-            connected.bootstrap.collect { progress ->
+            connected.collectBootstrapUntilTorTerminates(processLogs) { progress ->
                 if (progress >= BOOTSTRAP_COMPLETE && callRuntime == null) {
                     val runtime = JvmOnionCallRuntime.open(
                         control = connected,

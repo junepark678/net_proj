@@ -202,10 +202,11 @@ flushed `BYE(BUSY)`, except simultaneous dialing to the same peer: the smaller
 onion rejects the inbound leg with `BYE(GLARE)`; the larger reserves the inbound
 slot and tears down its outbound leg before negotiating the incoming call.
 Glare applies only while dialing, never to an established call. A silent inbound
-HELLO and the outbound HELLO/ACCEPT exchange each have a 10-second deadline;
-ringing lasts 30 seconds after a valid HELLO. Ringing may first appear without a
-display name while HELLO is being read. Early acceptance is retained until that
-HELLO validates; decline tears down immediately.
+An inbound HELLO has a 10-second deadline. Outbound callers wait 60 seconds for
+ACCEPT: the receiver's 30-second ringing window plus a 30-second Tor transport
+allowance. Ringing may first appear without a display name while HELLO is being
+read. Early acceptance is retained until that HELLO validates; decline tears
+down immediately.
 
 InCall sends PING every 2 seconds; only received PONG or AUDIO resets the
 15-second monotonic inactivity deadline. Timeout is a local `TIMEOUT` outcome;
@@ -232,6 +233,10 @@ mic → 48 kHz mono PCM (20 ms = 960 samples) → Opus encode (24 kbps, VoIP mod
 Tor → TCP → deframer → adaptive jitter buffer (target = p95 inter-arrival, min 60 ms,
     max 1500 ms, PLC on gaps via Opus decode(null)) → Opus decode → speaker
 ```
+
+After three consecutive playout underruns, the jitter buffer re-primes at the
+current adaptive target. This caps cursor advance during a sustained outage and
+lets delayed frames establish a new sequence cursor after a Tor latency increase.
 
 The common `dev.junepark.oniontalkie.shared.audio.AudioConstants` object owns the
 shared audio format and Opus settings for the codec and platform audio I/O (#13).

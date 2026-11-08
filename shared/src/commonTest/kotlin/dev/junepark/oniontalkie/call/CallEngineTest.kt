@@ -302,12 +302,12 @@ class CallEngineTest {
     }
 
     @Test
-    fun helloAcceptDeadlineIsExactlyTenSeconds() = runTest {
+    fun outboundAcceptDeadlineIncludesRingWindowAndTransportAllowance() = runTest {
         val f = Fixture(backgroundScope, testScheduler)
         f.engine.goOnline()
         f.engine.call(f.remote)
         runCurrent()
-        advanceTimeBy(9_999)
+        advanceTimeBy(59_999)
         runCurrent()
         assertIs<CallState.Dialing>(f.engine.state.value)
         advanceTimeBy(1)
@@ -315,6 +315,22 @@ class CallEngineTest {
         assertEquals(CallState.Online(CallEndReason.TIMEOUT), f.engine.state.value)
         assertEquals(1, f.dialer.outgoing.closes)
         assertTrue(f.media.isEmpty())
+        f.engine.close()
+    }
+
+    @Test
+    fun outboundAcceptCanArriveAfterTheThirtySecondRingingWindow() = runTest {
+        val f = Fixture(backgroundScope, testScheduler)
+        f.engine.goOnline()
+        f.engine.call(f.remote)
+        runCurrent()
+        advanceTimeBy(35_000)
+        f.dialer.outgoing.feed(Frame.Accept(1u))
+        runCurrent()
+
+        assertIs<CallState.InCall>(f.engine.state.value)
+        assertTrue(f.media.isNotEmpty())
+        f.engine.hangUp()
         f.engine.close()
     }
 

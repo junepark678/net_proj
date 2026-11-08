@@ -271,7 +271,8 @@ class CallEngine(
                 frames.close(failure)
             }
         }
-        val response = withTimeoutOrNull(HANDSHAKE_TIMEOUT_MS) {
+        val responseTimeoutMs = if (session.outbound) OUTBOUND_ACCEPT_TIMEOUT_MS else HANDSHAKE_TIMEOUT_MS
+        val response = withTimeoutOrNull(responseTimeoutMs) {
             if (session.outbound) session.write(hello)
             frames.receiveCatching()
         }
@@ -428,6 +429,9 @@ class CallEngine(
     private companion object {
         const val HANDSHAKE_TIMEOUT_MS = 10_000L
         const val RING_TIMEOUT_MS = 30_000L
+        // Allow the full incoming ringing window plus one additional Tor transport round trip.
+        const val OUTBOUND_ACCEPT_TIMEOUT_MS = RING_TIMEOUT_MS + ACCEPT_TRANSPORT_ALLOWANCE_MS
+        private const val ACCEPT_TRANSPORT_ALLOWANCE_MS = 30_000L
         const val PING_INTERVAL_MS = 2_000L
         const val INACTIVITY_TIMEOUT_MS = 15_000L
         const val WRITE_TIMEOUT_MS = 1_000L
