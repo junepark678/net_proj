@@ -100,12 +100,9 @@ class TorControlTest {
 
     @Test fun closedProcessLogStreamFailsBootstrapCollection() = runTest {
         val control = TorControl(TranscriptTransport(), backgroundScope)
-        val observer = backgroundScope.async {
+        val failure = assertFailsWith<TorProcessException> {
             control.collectBootstrapUntilTorTerminates(emptyFlow()) { }
         }
-        runCurrent()
-
-        val failure = assertFailsWith<TorProcessException> { observer.await() }
         assertEquals("Tor process exited unexpectedly", failure.message)
         control.close()
     }
