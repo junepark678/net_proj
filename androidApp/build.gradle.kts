@@ -15,6 +15,7 @@ android {
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1
         versionName = "0.1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildFeatures {
@@ -23,6 +24,9 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+    packaging {
+        jniLibs.useLegacyPackaging = true
     }
 }
 
@@ -33,5 +37,13 @@ kotlin {
 
 dependencies {
     implementation(project(":ui"))
+    implementation(project(":shared"))
     implementation(libs.androidx.activity.compose)
+    implementation(libs.tor.android)
+    implementation(libs.zxing.android.embedded)
+    androidTestImplementation(project(":shared"))
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.rules)
+    androidTestImplementation(libs.compose.ui.test.junit4)
 }

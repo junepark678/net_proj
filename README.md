@@ -34,7 +34,7 @@ classic relays (TURN).
 | Codec | Common `OpusCodec` API; Concentus (pure JVM port) in `jvmSharedMain` |
 | Transport | Tor: `tor-android` AAR (Android), Tor Expert Bundle (desktop); driven over the control port from common code |
 | Audio I/O | `expect`/`actual`: AudioRecord/AudioTrack (Android), `javax.sound.sampled` (desktop) |
-| CI | GitHub Actions: JVM unit tests, Android build, AOSP emulator instrumentation tests, desktop smoke test |
+| CI | GitHub Actions: JVM unit tests, Android build, AOSP emulator instrumentation tests, desktop distribution build |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module layout and
 protocol, and [docs/REPORT_PLAN.md](docs/REPORT_PLAN.md) for the report
@@ -94,9 +94,11 @@ before merge; the scores are recorded in the PR description.
 ```
 
 `shared/src/commonTest` runs through the `desktop` JVM target; it needs no
-emulator. The Android and desktop entry points both render `ui`'s common
-placeholder screen, which consumes `shared`. Android-specific shared code
-lives in `shared/src/androidMain`, desktop code in `shared/src/desktopMain`.
+emulator. Both entry points render the shared Onion Dial UI. Android uses a
+foreground service for Tor and a camera-based QR scanner. Desktop provides a
+tray menu and imports QR codes from image files. Both keep manual pairing-code
+entry and clipboard paste available. Platform-specific code lives in
+`androidApp`, `desktopApp`, and the corresponding `shared` source sets.
 
 The APK is written to `androidApp/build/outputs/apk/debug/androidApp-debug.apk`.
 Desktop `run` requires a graphical session. On a headless host, build a
@@ -109,10 +111,15 @@ distributable without opening a window:
 ```
 
 The desktop application and bundled runtime are written to
-`desktopApp/build/compose/binaries/main/app/OnionTalkie/`. Builds enable
-configuration cache and parallel execution; rerunning a command reuses the
-configuration cache. Build configuration performs no downloads or SDK setup
-outside normal Gradle dependency resolution.
+`desktopApp/build/compose/binaries/main/app/OnionDial/`. The desktop
+distribution stages a SHA-256-verified Tor Expert Bundle for the build host;
+ordinary compile tasks do not download it. Builds enable configuration cache
+and parallel execution; rerunning a command reuses the configuration cache.
+When `JAVA_HOME_17_X64` is available, the desktop package uses that JDK for its
+launcher and bundled runtime while Gradle continues to run on JDK 21. On other
+hosts, select a packaging JDK explicitly with
+`-PonionDialJpackageJavaHome=/path/to/jdk` if the default launcher is not
+compatible with the host.
 
 ## License
 

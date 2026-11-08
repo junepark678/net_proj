@@ -13,8 +13,15 @@ The CI jobs are:
   image, no installer) for the Ubuntu runner and uploads it as
   `desktop-distributable`. The upload fails if the build produced no files.
 
-The `qualify-emulator` and `qualify-tor` jobs are opt-in placeholders activated
-by the corresponding pull request labels; adding a label triggers a run. Their qualification bodies are
-tracked by issues #24 and #25. Branch protection on `main` requires the
+The `qualify-emulator` and `qualify-tor` jobs are opt-in qualifications activated
+by pull request labels #24 and #25; adding a label triggers a run.
+`qualify-emulator` runs Android instrumentation on an API 35 AOSP emulator,
+including checks for audio APIs, Keystore persistence, SOCKS duplex I/O, and
+startup of the packaged Tor daemon. `qualify-tor` installs Tor from the Tor
+Project repository after checking its signing-key fingerprint, runs the Tor
+control and two-engine loopback qualification, and makes a 60-second simulated
+audio call over real Tor. It uploads the raw qualification output as an artifact.
+These jobs do not demonstrate a physical Android-to-desktop call or a call over
+two independently routed networks. Branch protection on `main` requires the
 `unit` and `android` checks to pass on an up-to-date head before a merge; no
 review approvals are required and force pushes are disabled.

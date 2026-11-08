@@ -56,6 +56,8 @@ def main():
     ap.add_argument('--out', required=True)
     ap.add_argument('--ie', type=float, help=f'codec impairment, 0..95 (default: {DEFAULT_IE}, proxy)')
     ap.add_argument('--bpl', type=float, help=f'loss robustness, >0 (default: {DEFAULT_BPL}, proxy)')
+    ap.add_argument('--no-plots', action='store_true',
+                    help='write table and summary without creating figure files')
     args = ap.parse_args()
     parameters = {
         'ie': DEFAULT_IE if args.ie is None else args.ie,
@@ -68,19 +70,21 @@ def main():
     if not math.isfinite(parameters['bpl']) or parameters['bpl'] <= 0:
         ap.error('--bpl must be finite and greater than 0')
     # Argument help and statistics work without any third-party dependencies.
-    try:
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-    except ImportError:
-        plt = None
-        print('Warning: matplotlib unavailable; plots skipped. Install matplotlib '
-              'in your Python environment to enable figures.', file=sys.stderr)
+    plt = None
+    if not args.no_plots:
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+        except ImportError:
+            print('Warning: matplotlib unavailable; plots skipped. Install matplotlib '
+                  'in your Python environment to enable figures.', file=sys.stderr)
 
     groups = {s: [] for s in SCENARIOS}
     for fn in args.csvs:
         path = Path(fn)
-        if path.parent.name not in groups:
+        scenario = next((parent.name for parent in path.parents if parent.name in groups), None)
+        if scenario is None:
             print(f'Warning: unsupported scenario path {path}; skipped', file=sys.stderr)
             continue
         with path.open(newline='') as f:
@@ -88,16 +92,34 @@ def main():
             if reader.fieldnames != list(REQUIRED):
                 ap.error(f'{path}: unexpected CSV header')
             rows = list(reader)
+        summary_path = path.parent / 'summary.json'
+        if rows and summary_path.is_file():
+            try:
+                run_summary = json.loads(summary_path.read_text())
+                duration = float(run_summary['duration_s'])
+                sample_count = int(run_summary['samples'])
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                ap.error(f'{summary_path}: invalid metrics summary ({error})')
+            if sample_count != len(rows):
+                ap.error(f'{path}: {len(rows)} CSV rows but summary reports {sample_count} samples')
+            elapsed_in_final_interval = duration - math.floor(duration)
+            if sample_count > math.floor(duration) and elapsed_in_final_interval < 0.95:
+                rows.pop()
+                print(
+                    f'Excluded final partial interval ({elapsed_in_final_interval:.3f}s): {path}',
+                    file=sys.stderr,
+                )
         if rows:
-            groups[path.parent.name].append((path.stem, rows))
+            groups[scenario].append((path.stem, rows))
     if not any(groups.values()):
         ap.error('zero usable rows in supported scenario paths')
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    # Never leave figures from an earlier run beside a freshly written summary.
-    for name in FIGURES:
-        (out/name).unlink(missing_ok=True)
+    if not args.no_plots:
+        # Never leave figures from an earlier run beside a freshly written summary.
+        for name in FIGURES:
+            (out/name).unlink(missing_ok=True)
     keys = ('mean_rtt_ms', 'p50_rtt_ms', 'p95_rtt_ms', 'mean_jitter_ms',
             'p50_jitter_ms', 'p95_jitter_ms', 'loss_pct', 'plc_rate',
             'mean_buffer_ms', 'mean_tx_kbps', 'mean_rx_kbps', 'estimated_mos')
@@ -105,7 +127,7 @@ def main():
               'p50 jitter (ms)', 'p95 jitter (ms)', 'Mean interval loss (%)',
               'PLC rate (fraction)', 'Mean buffer delay (ms)', 'Mean tx (kbps)',
               'Mean rx (kbps)', f'MOS: {MOS_LABEL}')
-    lines = ['| Scenario | n runs | ' + ' | '.join(labels) + ' |',
+    lines = ['| Scenario | endpoint CSVs | ' + ' | '.join(labels) + ' |',
              '|---|---:|' + '---:|' * len(keys)]
     summary = {}
     styles = ['-', '--', ':']
@@ -119,33 +141,42 @@ def main():
         runs = groups[scenario]
         rows = [row for _, run in runs for row in run]
         if not rows:
-            summary[scenario] = {'n_runs': 0, 'metrics': None}
+            summary[scenario] = {'n_endpoint_csvs': 0, 'metrics': None}
             lines.append(f'| {scenario} | 0 | ' + ' | '.join(['—'] * len(keys)) + ' |')
             continue
+        rtt_values = [float(row['rtt_ms']) for row in rows if row['rtt_ms'].strip()]
         vals = {k: [float(row[k]) for row in rows]
-                for k in ('rtt_ms', 'jitter_ms', 'loss_pct', 'plc', 'buffer_ms', 'tx_kbps', 'rx_kbps')}
+                for k in ('jitter_ms', 'loss_pct', 'plc', 'buffer_ms', 'tx_kbps', 'rx_kbps')}
         mean = {k: statistics.mean(v) for k, v in vals.items()}
+        mean_rtt = statistics.mean(rtt_values) if rtt_values else None
         # Each complete one-second interval contains 50 received+concealed
         # playout frames at 20 ms/frame. CSV plc is an interval count.
         plc_rate = sum(vals['plc']) / (50 * len(rows))
-        values = [mean['rtt_ms'], percentile(vals['rtt_ms'], 50),
-                  percentile(vals['rtt_ms'], 95), mean['jitter_ms'],
+        values = [mean_rtt,
+                  percentile(rtt_values, 50) if rtt_values else None,
+                  percentile(rtt_values, 95) if rtt_values else None,
+                  mean['jitter_ms'],
                   percentile(vals['jitter_ms'], 50), percentile(vals['jitter_ms'], 95),
                   mean['loss_pct'], plc_rate, mean['buffer_ms'], mean['tx_kbps'],
-                  mean['rx_kbps'], mos(mean['rtt_ms'], mean['buffer_ms'], mean['loss_pct'],
-                                       parameters['ie'], parameters['bpl'])]
-        summary[scenario] = {'n_runs': len(runs), 'mos_model': MOS_LABEL,
+                  mean['rx_kbps'],
+                  mos(mean_rtt, mean['buffer_ms'], mean['loss_pct'],
+                      parameters['ie'], parameters['bpl']) if mean_rtt is not None else None]
+        summary[scenario] = {'n_endpoint_csvs': len(runs), 'mos_model': MOS_LABEL,
                              'mos_parameters': parameters,
                              'metrics': dict(zip(keys, values))}
         lines.append(f'| {scenario} | {len(runs)} | ' +
-                     ' | '.join(f'{v:.4f}' for v in values) + ' |')
+                     ' | '.join('—' if v is None else f'{v:.4f}' for v in values) + ' |')
         if plt:
             experiment = scenario.split('_', 1)[0]
+            plotted_run = False
             for run_index, (_, run) in enumerate(runs):
-                ax.plot([float(r['t_s']) for r in run], [float(r['rtt_ms']) for r in run],
-                        styles[i], label=experiment if run_index == 0 else '_nolegend_',
-                        color=str(.15 + .2*i), alpha=.65, linewidth=1,
-                        marker=markers[i], markevery=max(1, len(run)//12), markersize=2)
+                rtt_rows = [row for row in run if row['rtt_ms'].strip()]
+                if rtt_rows:
+                    ax.plot([float(r['t_s']) for r in rtt_rows], [float(r['rtt_ms']) for r in rtt_rows],
+                            styles[i], label=experiment if not plotted_run else '_nolegend_',
+                            color=str(.15 + .2*i), alpha=.65, linewidth=1,
+                            marker=markers[i], markevery=max(1, len(rtt_rows)//12), markersize=2)
+                    plotted_run = True
             xs = sorted(vals['jitter_ms'])
             ax2.plot(xs, [(j + 1)/len(xs) for j in range(len(xs))], styles[i],
                      marker=markers[i], markevery=max(1, len(xs)//12), markersize=2,
@@ -167,7 +198,7 @@ def main():
                   '', f'MOS parameters: Ie={parameters["ie"]:g} ({parameters["ie_source"]});',
                   f'Bpl={parameters["bpl"]:g} ({parameters["bpl_source"]}).',
                   'Indicative only; not a validated Opus or wideband MOS measurement.',
-                  'Figure legends: E1 = LAN loopback; E2 = same NAT via Tor; E3 = CGNAT via Tor.',
+                  'Figure legends: E1 = simulated LAN profile; E2 = same NAT via Tor; E3 = CGNAT via Tor.',
                   'RTT lines show individual calls; jitter CDFs pool calls by experiment.'])
     (out/'table.md').write_text('\n'.join(lines) + '\n')
     (out/'summary.json').write_text(json.dumps(summary, indent=2) + '\n')

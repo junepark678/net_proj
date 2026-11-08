@@ -3,6 +3,7 @@ package dev.junepark.oniontalkie.tor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -21,7 +22,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 
 /** Signals exposed by the control client. NEWNYM remains subject to Tor's rate limiting. */
-enum class TorSignal { NEWNYM, SHUTDOWN }
+enum class TorSignal { NEWNYM, RELOAD, SHUTDOWN }
 
 /** Cookie-authenticated Tor control-port client. Construct with a fresh transport and an owned
  * coroutine scope. Cancelling that scope or calling [close] releases the transport. Commands
@@ -38,6 +39,7 @@ class TorControl internal constructor(
     private val lifetime = SupervisorJob(scope.coroutineContext[Job])
     private val clientScope = CoroutineScope(scope.coroutineContext + lifetime)
     private val replies = Channel<TorReply>(1)
+    private val termination = CompletableDeferred<Throwable>()
     private val commandMutex = Mutex()
     private val readerJob: Job
     private val mutableBootstrap = MutableStateFlow(0)
@@ -51,6 +53,9 @@ class TorControl internal constructor(
     /** Live events without replay. Slow consumers can lose old events after 64 queued events;
      * event collectors never block command replies or bootstrap updates. */
     val events: SharedFlow<TorEvent> = mutableEvents.asSharedFlow()
+
+    /** Suspends until the control connection closes or its reader fails, returning that cause. */
+    suspend fun awaitTermination(): Throwable = termination.await()
 
     init {
         readerJob = clientScope.launch {
@@ -208,9 +213,11 @@ class TorControl internal constructor(
     }
 
     private fun terminate(cause: Throwable) {
-        replies.close(if (cause is CancellationException) {
+        val terminalCause = if (cause is CancellationException) {
             TorConnectionClosedException("Tor control command was cancelled", cause)
-        } else cause)
+        } else cause
+        termination.complete(terminalCause)
+        replies.close(terminalCause)
         runCatching { transport.close() }
         // Stop the reader, but let a command that already holds its complete reply (buffered
         // in `replies` before EOF) finish normally instead of being cancelled mid-flight.

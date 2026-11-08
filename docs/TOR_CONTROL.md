@@ -46,6 +46,12 @@ events for slow collectors and drops the oldest on overflow so logging cannot
 block replies. Collect before authentication to observe its initial events.
 Unknown statuses, fields and events retain their raw replies for consumers.
 
+`awaitTermination()` suspends until the reader observes EOF/failure or the
+control client is closed, then returns the terminal cause. Lifecycle owners
+should observe this alongside the Tor process log flow; the process flow closes
+when Tor exits. `collectBootstrapUntilTorTerminates` combines both signals with
+bootstrap collection and fails when either Tor resource ends unexpectedly.
+
 Commands are serialized, with an independent event reader. Replies support
 space, `-` continuation and `+` data lines, dot unescaping, 250/251 success,
 and negative replies. `getInfo` normalizes data blocks to LF without a final
@@ -91,6 +97,18 @@ own components.
 Protocol references: [message framing](https://spec.torproject.org/control-spec/message-format.html),
 [commands](https://spec.torproject.org/control-spec/commands.html), and
 [replies and events](https://spec.torproject.org/control-spec/replies.html).
+
+## Onion service integration test
+
+`OnionServiceTorTest` (desktop) publishes with client authorization, waits for the
+`HS_DESC UPLOADED` event, and issues `DEL_ONION`. It is skipped unless
+`TOR_CONTROL_SMOKE_BINARY` (isolated Tor, needs the public network) or
+`TOR_CONTROL_PORT` plus `TOR_CONTROL_COOKIE_FILE` (a running Tor you own) is set:
+
+```sh
+ANDROID_HOME="$ANDROID_HOME" TOR_CONTROL_SMOKE_BINARY=/path/to/tor \
+  ./gradlew :shared:desktopTest --tests '*OnionServiceTorTest' --rerun-tasks
+```
 
 ## Verification
 

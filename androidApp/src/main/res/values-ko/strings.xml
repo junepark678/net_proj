@@ -1,0 +1,37 @@
+<resources>
+    <string name="app_name">Onion Dial</string>
+    <string name="online_channel_name">Onion Dial 온라인</string>
+    <string name="online_channel_description">온라인 상태에서 Tor를 사용할 수 있도록 유지합니다.</string>
+    <string name="in_call_channel_name">Onion Dial 통화</string>
+    <string name="in_call_channel_description">현재 통화 상태와 통화 조작을 표시합니다.</string>
+    <string name="tor_offline">Tor 오프라인</string>
+    <string name="tor_starting">Tor 시작 중</string>
+    <string name="tor_bootstrapping">Tor 네트워크 연결 중 (%1$d%%)</string>
+    <string name="tor_connected">Tor 연결됨</string>
+    <string name="tor_failed">Tor를 시작할 수 없습니다</string>
+    <string name="go_offline">Tor 중지</string>
+    <string name="hang_up">통화 종료</string>
+    <string name="call_in_progress">%1$s님과 통화 중</string>
+    <string name="battery_optimization_title">백그라운드 연결을 허용할까요?</string>
+    <string name="battery_optimization_message">화면이 꺼지면 배터리 최적화가 Onion Dial을 제한할 수 있습니다. 통화 연결 가능성을 높이기 위해 앱을 최적화에서 제외할 수 있습니다. Android 시스템 설정이 열리며, 변경하지 않아도 됩니다.</string>
+    <string name="notification_rationale_title">Onion Dial 통화 대기</string>
+    <string name="notification_rationale_message">Tor가 실행되는 동안 온라인 상태를 표시하고 언제든 중지할 수 있도록 지속 알림이 필요합니다.</string>
+    <string name="continue_label">계속</string>
+    <string name="cancel_label">취소</string>
+    <string name="notification_permission_denied">Tor를 시작하려면 알림 권한이 필요합니다.</string>
+    <string name="default_display_name">Android 사용자</string>
+    <string name="microphone_permission_title">통화용 마이크 허용</string>
+    <string name="microphone_permission_message">Onion Dial에서 음성 통화를 걸고 받으려면 마이크 접근 권한이 필요합니다.</string>
+    <string name="microphone_permission_denied">통화하려면 마이크 접근 권한이 필요합니다.</string>
+    <string name="incoming_call_channel_name">수신 전화</string>
+    <string name="incoming_call_title">Onion Dial 전화</string>
+    <string name="incoming_call_from">%1$s님의 전화</string>
+    <string name="answer_call">받기</string>
+    <string name="decline_call">거절</string>
+    <string name="share_metrics_title">Onion Dial 통화 측정 공유</string>
+    <string name="metrics_file_unavailable">아직 공유할 통화 측정 파일이 없습니다.</string>
+    <string name="camera_permission_title">QR 페어링을 위해 카메라 허용</string>
+    <string name="camera_permission_message">Onion Dial은 연락처의 페어링 QR 코드를 읽을 때만 카메라를 사용합니다. 코드를 직접 입력할 수도 있습니다.</string>
+    <string name="camera_permission_denied">카메라 권한이 없습니다. 페어링 코드를 직접 입력할 수 있습니다.</string>
+    <string name="scan_pairing_qr_prompt">카메라를 Onion Dial 페어링 QR 코드에 맞추세요</string>
+</resources>

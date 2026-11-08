@@ -5,8 +5,25 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.test.runTest
 
 class AudioFakesTest {
+    @Test
+    fun inputFlowOwnsLifecycleAndEmitsWholeFrames() = runTest {
+        var reads = 0
+        val input = FakeAudioInput {
+            if (reads++ < 2) ShortArray(AudioFormat.SAMPLES_PER_FRAME) { reads.toShort() } else null
+        }
+
+        val frames = input.frames().toList()
+
+        assertEquals(2, frames.size)
+        assertEquals(AudioFormat.SAMPLES_PER_FRAME, frames[0].size)
+        assertEquals(AudioFormat.SAMPLES_PER_FRAME, frames[1].size)
+        assertFailsWith<IllegalStateException> { input.read() }
+    }
+
     @Test
     fun inputCopiesSourceBuffersAndHonorsLifecycleAndEof() {
         val source = ShortArray(960) { 42 }

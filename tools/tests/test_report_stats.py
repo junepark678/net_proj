@@ -55,7 +55,7 @@ class ReportStatsTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 summary = json.loads((out/'summary.json').read_text())
                 group = summary['E1_lan_loopback']
-                self.assertEqual(group['n_runs'], 2)
+                self.assertEqual(group['n_endpoint_csvs'], 2)
                 self.assertEqual(group['mos_model'], stats.MOS_LABEL)
                 self.assertEqual(group['mos_parameters'], {
                     'ie': 10, 'bpl': 4.9,
@@ -70,7 +70,7 @@ class ReportStatsTest(unittest.TestCase):
                     self.assertAlmostEqual(group['metrics'][key], value, places=8, msg=key)
                 self.assertIsNone(summary['E2_same_nat_tor']['metrics'])
                 table = (out/'table.md').read_text()
-                for label in ('Mean RTT', 'p50 jitter', 'PLC rate', stats.MOS_LABEL, '0.1000'):
+                for label in ('endpoint CSVs', 'Mean RTT', 'p50 jitter', 'PLC rate', stats.MOS_LABEL, '0.1000'):
                     self.assertIn(label, table)
                 if 'matplotlib unavailable' in result.stderr:
                     self.assertFalse((out/'jitter_cdf.png').exists())
@@ -97,6 +97,59 @@ class ReportStatsTest(unittest.TestCase):
                     self.assertIn(expected_source, (out/'table.md').read_text())
                 self.assertIn(f'Ie={ie:g}', (out/'table.md').read_text())
                 self.assertIn(f'Bpl={bpl:g}', (out/'table.md').read_text())
+
+    def test_skips_short_final_interval_and_ignores_missing_rtt(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d) / 'E1_lan_loopback' / 'trial-1-a'
+            folder.mkdir(parents=True)
+            path = folder / 'call.csv'
+            with path.open('w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(stats.REQUIRED)
+                writer.writerows([
+                    [1, '', 1, 0, 0, 0, 20, 24, 24, '', ''],
+                    [2, 100, 1, 0, 0, 0, 20, 24, 24, '', ''],
+                    [2, 500, 50, 0, 0, 49, 99, 999, 999, '', ''],
+                ])
+            (folder / 'summary.json').write_text(json.dumps({
+                'samples': 3,
+                'duration_s': 2.01,
+            }))
+
+            out = Path(d) / 'out'
+            result = self.invoke([path], out, no_packages=True, extra=('--no-plots',))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('Excluded final partial interval (0.010s)', result.stderr)
+            metrics = json.loads((out / 'summary.json').read_text())['E1_lan_loopback']['metrics']
+            self.assertEqual(metrics['mean_rtt_ms'], 100)
+            self.assertEqual(metrics['mean_jitter_ms'], 1)
+            self.assertEqual(metrics['mean_tx_kbps'], 24)
+            self.assertIsNotNone(metrics['estimated_mos'])
+            self.assertFalse((out / 'rtt_timeseries.png').exists())
+            self.assertFalse((out / 'jitter_cdf.png').exists())
+
+    def test_absent_rtt_keeps_other_metrics_and_omits_mos(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d) / 'E1_lan_loopback'
+            folder.mkdir()
+            path = folder / 'call.csv'
+            with path.open('w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(stats.REQUIRED)
+                writer.writerow([1, '', 2, 0, 0, 0, 20, 24, 24, '', ''])
+
+            out = Path(d) / 'out'
+            result = self.invoke([path], out, no_packages=True, extra=('--no-plots',))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            metrics = json.loads((out / 'summary.json').read_text())['E1_lan_loopback']['metrics']
+            self.assertIsNone(metrics['mean_rtt_ms'])
+            self.assertIsNone(metrics['p50_rtt_ms'])
+            self.assertIsNone(metrics['p95_rtt_ms'])
+            self.assertIsNone(metrics['estimated_mos'])
+            self.assertEqual(metrics['mean_tx_kbps'], 24)
+            self.assertIn('—', (out / 'table.md').read_text())
+            self.assertFalse((out / 'rtt_timeseries.png').exists())
+            self.assertFalse((out / 'jitter_cdf.png').exists())
 
     def test_invalid_model_parameters(self):
         with tempfile.TemporaryDirectory() as d:

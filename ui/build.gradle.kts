@@ -17,10 +17,25 @@ kotlin {
     jvm("desktop")
 
     sourceSets {
+        androidMain.dependencies {
+            implementation(libs.zxing.core)
+        }
         commonMain.dependencies {
             implementation(project(":shared"))
+            implementation(compose.material3)
             implementation(libs.compose.foundation)
             implementation(libs.compose.ui)
+        }
+        val desktopMain by getting {
+            dependencies {
+                implementation(libs.zxing.core)
+            }
+        }
+        val desktopTest by getting {
+            dependencies {
+                implementation(compose.desktop.uiTestJUnit4)
+                implementation(compose.desktop.currentOs)
+            }
         }
     }
 }

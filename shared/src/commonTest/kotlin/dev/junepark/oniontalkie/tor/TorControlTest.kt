@@ -13,6 +13,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
@@ -85,6 +86,27 @@ class TorControlTest {
         control.close()
     }
 
+    @Test fun controlReaderTerminationCanBeAwaited() = runTest {
+        val transport = TranscriptTransport()
+        val control = TorControl(transport, backgroundScope)
+        val ended = backgroundScope.async { control.awaitTermination() }
+
+        transport.input.close()
+        runCurrent()
+
+        assertIs<TorConnectionClosedException>(ended.await())
+        assertTrue(transport.closed)
+    }
+
+    @Test fun closedProcessLogStreamFailsBootstrapCollection() = runTest {
+        val control = TorControl(TranscriptTransport(), backgroundScope)
+        val failure = assertFailsWith<TorProcessException> {
+            control.collectBootstrapUntilTorTerminates(emptyFlow()) { }
+        }
+        assertEquals("Tor process exited unexpectedly", failure.message)
+        control.close()
+    }
+
     @Test fun bootstrapSnapshotCannotOverwriteANewerEvent() = runTest {
         val transport = TranscriptTransport()
         val control = TorControl(transport, backgroundScope)
@@ -154,6 +176,15 @@ class TorControlTest {
         transport.expect("SETEVENTS", "250 OK")
         next.await()
         assertFalse(transport.closed)
+        control.close()
+    }
+
+    @Test fun streamEventsCanBeEnabledForDiagnostics() = runTest {
+        val transport = TranscriptTransport()
+        val control = TorControl(transport, backgroundScope)
+        val enable = async { control.setEvents(TorEventType.STATUS_CLIENT, TorEventType.CIRC, TorEventType.HS_DESC, TorEventType.STREAM) }
+        transport.expect("SETEVENTS STATUS_CLIENT CIRC HS_DESC STREAM", "250 OK")
+        enable.await()
         control.close()
     }
 

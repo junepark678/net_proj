@@ -1,5 +1,12 @@
 # Development setup
 
+For the headless two-engine call simulator, presets, and metrics output, see
+[Call simulator](SIMULATOR.md).
+
+The Tor integration gate uses the Tor Project Debian/Ubuntu repository. Its CI setup verifies the
+signing key fingerprint before installing the keyring package, following the [official Tor
+installation instructions](https://support.torproject.org/little-t-tor/getting-started/installing/).
+
 Install a JDK 21 distribution and ensure `java -version` reports 21. Install
 `curl`, `unzip`, and `shasum` (or `sha256sum`), then from the repository root run:
 
@@ -16,6 +23,10 @@ pinned to archive `16111833` (tools revision `23.0`); Google publishes SHA-1 che
 metadata, which the script verifies alongside a pinned SHA-256 computed from
 the Linux and macOS archives. Re-running after installation skips license and
 package setup when all required packages are present.
+
+Desktop packaging uses `JAVA_HOME_17_X64` when it is available, while Gradle
+and compilation continue on JDK 21. If a separate packaging JDK is needed, pass
+`-PonionDialJpackageJavaHome=/path/to/jdk` to `:desktopApp:createDistributable`.
 
 To create an emulator later, first install the optional system image:
 

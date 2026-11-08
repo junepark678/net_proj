@@ -19,7 +19,9 @@ captures/
 tor-data/
 **/hs_ed25519_secret_key
 # Report build outputs
-report/out/
+report/out/*
+!report/out/table.md
+!report/out/summary.json
 # Misc
 *.log
 __pycache__/
