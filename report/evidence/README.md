@@ -37,4 +37,4 @@ Tor reported the Android SOCKS stream succeeded and the desktop entered the call
 
 ## Remaining evidence gaps
 
-No screenshots, screen recording, or audio recording are included, following the user's instruction not to create visible capture artifacts. Physical devices/networks, reverse-direction dialing, simultaneous-dial glare, camera-based QR pairing, exact Android bootstrap and tap-to-InCall durations, and human audio remain unverified. The desktop bootstrap and accept-to-InCall timing above are recorded, but they do not replace those missing measurements. Issue #26 remains open.
+No screenshots, screen recording, or audio recording are included; the archived evidence is limited to metrics CSVs and written conditions. Physical devices/networks, reverse-direction dialing, simultaneous-dial glare, camera-based QR pairing, exact Android bootstrap and tap-to-InCall durations, and human audio remain unverified. The desktop bootstrap and accept-to-InCall timing above are recorded, but they do not replace those missing measurements. Issue #26 remains open.

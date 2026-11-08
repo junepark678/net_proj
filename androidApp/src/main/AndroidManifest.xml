@@ -29,7 +29,7 @@
             android:foregroundServiceType="specialUse|microphone">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="onion_dial_tor_presence" />
+                android:value="Persistent Tor onion-service presence after explicit user opt-in, allowing paired peers to call without push notifications." />
         </service>
         <activity
             android:name=".MainActivity"
