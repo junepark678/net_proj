@@ -74,7 +74,7 @@ expect class TorProcess(config: TorConfig) {
 suspend fun TorControl.collectBootstrapUntilTorTerminates(
     processLogs: Flow<TorLogLine>,
     onBootstrap: suspend (Int) -> Unit,
-) = coroutineScope {
+): Nothing = coroutineScope {
     launch {
         processLogs.collect { }
         throw TorProcessException("Tor process exited unexpectedly")
